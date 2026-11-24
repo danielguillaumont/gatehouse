@@ -18,6 +18,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - target: gatehouse
+            package: ""
           - target: gateward
             package: gateward==0.3.0
           - target: mcp-watchdog
@@ -29,12 +31,14 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked
       - name: Install ${{ matrix.package }} in an isolated venv
+        if: matrix.package != ''
         run: |
           uv venv "$RUNNER_TEMP/competitor" --python 3.12
           uv pip install --python "$RUNNER_TEMP/competitor/bin/python" "${{ matrix.package }}"
           uv pip freeze --python "$RUNNER_TEMP/competitor/bin/python" > competitor-freeze.txt
           echo "$RUNNER_TEMP/competitor/bin" >> "$GITHUB_PATH"
       - name: Check the wrapper is on PATH
+        if: matrix.package != ''
         run: command -v ${{ matrix.target }}
       - name: Run the attack suite through ${{ matrix.target }}
         run: |
@@ -47,4 +51,5 @@ jobs:
           path: |
             reports/${{ matrix.target }}
             competitor-freeze.txt
+          if-no-files-found: ignore
             suite.log
