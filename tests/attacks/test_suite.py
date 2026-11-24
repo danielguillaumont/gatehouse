@@ -90,3 +90,29 @@ def test_cli_run_and_canary_check(tmp_path: Path) -> None:
     leak = out / "evidence" / "secrets.jwt" / "stderr.txt"
     leak.write_text("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJDQU5BUllKV1QifQ.Q0FOQVJZc2lnbmF0dXJlQ0FOQVJZ")
     assert attacks_main(["canary-check", str(out)]) == 1
+
+
+def test_target_result_marker_is_stripped_and_counted() -> None:
+    from attacks.harness import strip_result_marker
+
+    calls: list[dict[str, Any]] = [
+        {"response": {"result": {"content": [{"type": "text", "text": "ok<!-- gw:0a1b2c3d -->"}]}}},
+        {"response": {"error": {"code": 1}}},
+    ]
+    assert strip_result_marker(calls, r"<!-- gw:[0-9a-f]{8} -->") == 1
+    assert calls[0]["response"]["result"]["content"][0]["text"] == "ok"
+
+
+def test_competitor_patterns_are_clean_and_match() -> None:
+    import re
+
+    from attacks.targets import TARGETS
+
+    for target in TARGETS.values():
+        for pattern in (target.result_marker, target.stderr_alert):
+            if pattern is not None:
+                assert not any(ord(c) < 32 for c in pattern), target.name
+    alert = TARGETS["mcp-watchdog"].stderr_alert
+    assert alert is not None
+    panel = "| CRITICAL [CMD-INJECT] upstream | LOW [ENTROPY] Unusual JSON nesting depth"
+    assert re.findall(alert, panel) == ["CRITICAL [CMD-INJECT]"]

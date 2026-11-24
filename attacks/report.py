@@ -73,7 +73,12 @@ def judge(sc: Scenario, obs: Observation) -> Result:
     }
     if sc.benign:
         problems = benign_interference(sc, obs)
-        return Result(outcome="false_positive" if problems else "pass", notes=problems, **base)
+        notes = list(problems)
+        if obs.markers_stripped:
+            notes.append(
+                f"{obs.markers_stripped} target result marker(s) stripped before comparing"
+            )
+        return Result(outcome="false_positive" if problems else "pass", notes=notes, **base)
     succeeded = attack_succeeded(sc, obs)
     if obs.target == "direct":
         outcome = "missed" if succeeded else "broken"

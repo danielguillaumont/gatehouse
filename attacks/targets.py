@@ -33,6 +33,12 @@ class Target:
     name: str
     description: str
     emits_gatehouse_events: bool = False
+    # A marker the target deliberately adds to every tool result (not a block or an
+    # edit of the content). Stripped before benign results are compared, and counted.
+    result_marker: str | None = None
+    # For targets whose only alert channel is human-readable stderr: a regex whose matches
+    # count as detections ("detected only" if the attack still succeeded).
+    stderr_alert: str | None = None
 
     def available(self) -> bool:
         return True
@@ -89,11 +95,23 @@ TARGETS: dict[str, Target] = {
         "gatehouse", "gatehouse run, attacks/policy-eval.yaml", emits_gatehouse_events=True
     ),
     # Invocation verified against each project's README on 2026-11-24 (docs/prior-art.md).
+    # mcp-watchdog prints alert panels ("CRITICAL [CMD-INJECT]") on stderr. LOW alerts are
+    # excluded: a LOW "[ENTROPY] Unusual JSON nesting depth" fires on every session.
     "mcp-watchdog": External(
-        "mcp-watchdog", "mcp-watchdog stdio wrapper", exe="mcp-watchdog", prefix=("--",)
+        "mcp-watchdog",
+        "mcp-watchdog stdio wrapper",
+        stderr_alert=r"\b(?:CRITICAL|HIGH|MEDIUM) \[[A-Z][A-Z_\- ]{1,30}\]",
+        exe="mcp-watchdog",
+        prefix=("--",),
     ),
+    # gateward's rule 12 ("canary tripwire") appends <!-- gw:XXXXXXXX --> to every text
+    # result to detect exfiltration of response data (src/gateward/canary.py, d2a65a4a81).
     "gateward": External(
-        "gateward", "gateward stdio wrapper", exe="gateward", prefix=("run", "--")
+        "gateward",
+        "gateward stdio wrapper",
+        result_marker=r"<!-- gw:[0-9a-f]{8} -->",
+        exe="gateward",
+        prefix=("run", "--"),
     ),
 }
 

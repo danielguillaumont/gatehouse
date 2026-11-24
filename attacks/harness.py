@@ -7,6 +7,7 @@ A scenario has one or more *phases*; each phase is a fresh client + target proce
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -129,6 +130,24 @@ class Observation:
     stderr: list[str] = field(default_factory=list[str])
     errors: list[str] = field(default_factory=list[str])
     duration_s: float = 0.0
+    markers_stripped: int = 0
+    stderr_alerts: list[str] = field(default_factory=list[str])
+
+
+def strip_result_marker(calls: list[dict[str, Any]], marker: str) -> int:
+    """Remove a target's deliberate per-result marker from text content; return count."""
+    pattern = re.compile(marker)
+    count = 0
+    for call in calls:
+        result = cast(dict[str, Any], call.get("response", {})).get("result")
+        if not isinstance(result, dict):
+            continue
+        for item in cast(list[Any], cast(dict[str, Any], result).get("content") or []):
+            if isinstance(item, dict) and isinstance(cast(dict[str, Any], item).get("text"), str):
+                entry = cast(dict[str, Any], item)
+                new, n = pattern.subn("", cast(str, entry["text"]))
+                entry["text"], count = new, count + n
+    return count
 
 
 def _dump(value: object) -> str:
@@ -220,6 +239,13 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
                 for line in f.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         obs.events.append(json.loads(line))
+        if target.stderr_alert is not None:
+            text = "".join(obs.stderr)
+            obs.stderr_alerts = sorted(
+                {f"stderr:{m.group(0)}" for m in re.finditer(target.stderr_alert, text)}
+            )
+        if target.result_marker is not None:
+            obs.markers_stripped = strip_result_marker(obs.calls, target.result_marker)
         if keep_dir is not None:
             shutil.copytree(tmp, keep_dir / sc.id, dirs_exist_ok=True)
     finally:
@@ -339,12 +365,16 @@ def _event_key(e: Mapping[str, Any]) -> str | None:
 
 
 def detections(obs: Observation) -> list[str]:
-    """What gatehouse reported about this scenario (detector rules and alert events)."""
+    """What the target reported about this scenario: gatehouse detector rules and alert
+    events, or, for competitors that only print alerts, matches of their stderr pattern."""
     found: list[str] = []
     for e in obs.events:
         key = _event_key(e)
         if key and key not in found:
             found.append(key)
+    for alert in obs.stderr_alerts:
+        if alert not in found:
+            found.append(alert)
     return found
 
 
