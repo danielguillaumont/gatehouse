@@ -40,7 +40,7 @@ to the server. Batches would otherwise need a second inspection path.
 **D-006 Policy precedence:** explicit block anywhere wins (IAM-style); otherwise the most
 specific matching rules win (partial order over server/tool specificity); incomparable
 rules that disagree → `require_approval`; no match → required `default_action`. Rule
-order never matters. (Owner-approved; see `docs/policy.md`.)
+order never matters. (See `docs/policy.md`.)
 
 **D-007 Name normalization:** strip Unicode format characters, NFKC, casefold, NFKC.
 Defeats case/fullwidth/math-alphanumeric/zero-width evasions. Cross-script confusables

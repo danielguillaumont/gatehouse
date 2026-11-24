@@ -259,26 +259,15 @@ Fail-open decisions are always visible in telemetry; a KQL rule alerts on `gateh
 
 ## 12. MVP — 1 week (~30 h at 4–6 h/day)
 
-**Ownership**
-
-- **You write**: pinning (`inspect/pinning.py`, canonical hashing, diff), KQL analytics
-  rules.
-- **Claude writes, then teaches** (you approve the design, review, and must be able to
-  explain it): policy engine (`policy/`). Done ahead of schedule; see `docs/policy.md`.
-- **Paired**: router/session (`proxy/router.py`, `proxy/session.py`).
-- **Generated, you review**: scaffold, CI, Pydantic models (after you design the schemas),
-  CLI, sinks, secret catalog + redactor, mock servers, harness, report, benchmark, fixture
-  generator, demo server.
-
-| Day | Deliverable | Owner | Done when |
-|---|---|---|---|
-| 1 | uv scaffold, CI matrix, exact SDK pin + spec version recorded, event/policy schemas, ADR-0001, `prior-art.md` draft | you design schemas; I generate | CI green on Windows + Linux |
-| 2 | Passthrough proxy with id correlation and stdout discipline | **paired** | Claude Code works unchanged through gatehouse on Windows |
-| 3 | Pinning: canonical hash, pin store, `gatehouse pin` / `diff`, strict + TOFU, list filtering, `list_changed` | **you** | Mutating a pinned tool removes it and emits `listing.pin_mismatch` |
-| 4 | Wire the policy engine into the router, `validate-policy`, policy integrity (§9), fail-closed paths (§6), `self_protect` | generated (engine already done) | Decisions applied end-to-end; tamper test emits `policy.tampered` |
-| 5 | `args.secrets`, redactor (§8), HMAC fingerprints, JSONL sink, canary test | generated, you review | No canary ever appears in any output |
-| 6 | Attack + benign mock servers, target-agnostic harness, evaluation report, `known-bypasses.md` stub, latency benchmark | generated, you review | CI job summary shows precision/recall/FP rate and latency table |
-| 7 | `GatehouseEvents_CL` schema, 4–5 KQL rules, fixture, ADX validation; **demo**; README | **you** (KQL); generated (demo scaffolding) | Rules return expected rows on the fixture; demo recorded |
+| Day | Deliverable | Done when |
+|---|---|---|
+| 1 | uv scaffold, CI matrix, exact SDK pin + spec version recorded, event/policy schemas, ADR-0001, `prior-art.md` draft | CI green on Windows + Linux |
+| 2 | Passthrough proxy with id correlation and stdout discipline | Claude Code works unchanged through gatehouse on Windows |
+| 3 | Pinning: canonical hash, pin store, `gatehouse pin` / `diff`, strict + TOFU, list filtering, `list_changed` | Mutating a pinned tool removes it and emits `listing.pin_mismatch` |
+| 4 | Wire the policy engine into the router, `validate-policy`, policy integrity (§9), fail-closed paths (§6), `self_protect` | Decisions applied end-to-end; tamper test emits `policy.tampered` |
+| 5 | `args.secrets`, redactor (§8), HMAC fingerprints, JSONL sink, canary test | No canary ever appears in any output |
+| 6 | Attack + benign mock servers, target-agnostic harness, evaluation report, `known-bypasses.md` stub, latency benchmark | CI job summary shows precision/recall/FP rate and latency table |
+| 7 | `GatehouseEvents_CL` schema, 4–5 KQL rules, fixture, ADX validation; **demo**; README | Rules return expected rows on the fixture; demo recorded |
 
 **KQL rules in MVP** (all against the fixture):
 1. Rug pull: `listing.pin_mismatch`.
@@ -339,13 +328,13 @@ rules to 3. Keep: passthrough correctness, pinning, redaction, evaluation report
    and a usable diff when servers legitimately upgrade.
 5. Detection quality (M2): Unicode evasion, poisoning hidden in schemas, and above all an
    honest FP rate on benign traffic.
-6. Not overfitting the suite you also wrote; fair, reproducible competitor comparisons.
+6. Not overfitting a suite written alongside the detectors; fair, reproducible
+   competitor comparisons.
 7. KQL correlation: time-windowed joins across servers, session windows, entity mapping.
 
-## 15. Working agreement
+## 15. Conventions
 
-- Small, incremental commits; no bulk-generated drops. You should be able to explain every
-  line.
-- Run `/code-review` on your hand-written modules before each milestone.
+- Small, incremental commits with clear messages.
+- Code review of each module before its milestone is closed.
 - Every claim in README, `prior-art.md` and `evaluation.md` must be reproducible from the
   repo (command + version + date).
