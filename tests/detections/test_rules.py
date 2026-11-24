@@ -83,10 +83,12 @@ def test_rule_ids_are_unique() -> None:
 
 @pytest.mark.parametrize("rule_id", sorted(RULES))
 def test_filter_columns_exist_in_schema(rule_id: str) -> None:
-    """Every column a rule filters on with `where X ==/in` must exist in the table."""
+    """Every column a rule filters on with `where X ==/in` must exist in the table, or be
+    defined earlier in the query (`project Alias = Column`, `summarize Alias = ...`)."""
     query = RULES[rule_id]["query"]
+    aliases = set(re.findall(r"\b([A-Z][A-Za-z0-9]+)\s*=(?!=)", query))
     for col in re.findall(r"\b([A-Z][A-Za-z0-9]+)\s*(?:==|!=|\bin\b|has\b)", query):
-        assert col in COLUMNS, f"{rule_id}: unknown column {col}"
+        assert col in COLUMNS or col in aliases, f"{rule_id}: unknown column {col}"
 
 
 def test_sample_data_matches_schema_and_has_no_local_details() -> None:

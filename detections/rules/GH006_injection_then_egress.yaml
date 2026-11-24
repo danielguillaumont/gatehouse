@@ -1,0 +1,59 @@
+id: 5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7006
+name: gatehouse - Prompt injection followed by egress on another MCP server
+description: |
+  A tool result on one MCP server contained a prompt-injection or exfiltration-beacon
+  finding, and within 10 minutes the same agent session called an egress or exec tool on
+  a *different* server. Each gatehouse wrapper sees one server, so neither event alone
+  shows the attack chain; AgentSessionId joins them. The injected result may have been
+  withheld (Action = blocked) and the agent still acted, for example because the same
+  content reached it another way, or the policy only logs findings. Triage: read the
+  injection finding's MatchSummary and RuleId, then check what the egress call sent
+  (ArgsHmac lets you match it against other sessions without seeing the arguments).
+severity: High
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 30m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Execution
+  - Exfiltration
+relevantTechniques:
+  - T1059
+  - T1567
+query: |
+  let window = 10m;
+  let injections = GatehouseEvents_CL
+      | where EventType == "detection" and Direction == "server_to_client"
+      | where DetectorId in ("response.injection", "response.exfil_url")
+      | summarize InjectionTime = min(TimeGenerated), InjectionRules = make_set(RuleId, 10),
+                  InjectionAction = take_any(Action), InjectionSummary = take_any(MatchSummary)
+          by AgentSessionId, Host, SourceServer = ServerName, SourceTool = ToolName;
+  let egress = GatehouseEvents_CL
+      | where EventType == "tool.call" and ToolRisk in ("egress", "exec")
+      | project EgressTime = TimeGenerated, AgentSessionId, EgressServer = ServerName,
+                EgressTool = ToolName, EgressRisk = ToolRisk, EgressAction = Action, ArgsHmac;
+  injections
+  | join kind=inner egress on AgentSessionId
+  | where EgressServer != SourceServer
+  | where EgressTime between (InjectionTime .. (InjectionTime + window))
+  | summarize FirstEgress = min(EgressTime), EgressCalls = count(),
+              EgressTools = make_set(strcat(EgressServer, "/", EgressTool), 10),
+              EgressActions = make_set(EgressAction, 5)
+      by AgentSessionId, Host, SourceServer, SourceTool, InjectionTime,
+         tostring(InjectionRules), InjectionAction, InjectionSummary
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  SourceServer: SourceServer
+  SourceTool: SourceTool
+  EgressTools: EgressTools
+alertDetailsOverride:
+  alertDisplayNameFormat: "Injection from {{SourceServer}}/{{SourceTool}} followed by egress on another server"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

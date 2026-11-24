@@ -26,3 +26,7 @@ GH005_blocked_call_burst:
   rows: 1
   include:
     - {AgentSessionId: eval-blocked-burst, BlockedCalls: 12}
+GH006_injection_then_egress:
+  rows: 1
+  include:
+    - {AgentSessionId: eval-cross-server-injection, SourceServer: web, SourceTool: fetch_page, InjectionAction: blocked, EgressCalls: 1}

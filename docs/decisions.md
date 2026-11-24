@@ -202,3 +202,18 @@ Alternatives considered:
   listener and auth, which is out of scope for a stdio proxy.
 - Blocking with a "re-run after approving" message, like `gatehouse pin`. That stays the
   behaviour for clients without elicitation.
+
+**D-031 (2026-11-24) Sentinel infrastructure is generated from the tested sources.** The
+Bicep doesn't restate the table columns or the rule KQL. `detections/build_infra.py`
+writes `infra/generated/columns.json` and `rules.json` from the event schema and the rule
+YAML, and Bicep reads them with `loadJsonContent`. A test fails if they're stale. So the
+rules deployed are byte-for-byte the ones validated in the Kusto emulator. The ingestion
+path is a DCE plus a DCR with `transformKql: source`: gatehouse already redacts and
+shapes events, and a transform would be a second, untested place where fields change.
+CI compiles the Bicep and fails on BCP081 (unknown resource type or API version). Nothing
+is deployed. The cross-server rule GH006 joins `response.*` findings on one server to
+egress/exec calls on another in the same `AgentSessionId`; per-server wrappers can't see
+that chain on their own. Alternatives considered:
+- Hand-written ARM rule JSON. Rejected: it duplicates the KQL.
+- The Sentinel "repositories" (CI/CD) feature. Not chosen: it needs a connected GitHub
+  repo in the workspace, and a plain deployment shows the same thing more portably.

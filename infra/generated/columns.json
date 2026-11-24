@@ -1,0 +1,158 @@
+[
+  {
+    "name": "TimeGenerated",
+    "type": "datetime"
+  },
+  {
+    "name": "EventId",
+    "type": "string"
+  },
+  {
+    "name": "EventType",
+    "type": "string"
+  },
+  {
+    "name": "Severity",
+    "type": "string"
+  },
+  {
+    "name": "Action",
+    "type": "string"
+  },
+  {
+    "name": "Direction",
+    "type": "string"
+  },
+  {
+    "name": "Reason",
+    "type": "string"
+  },
+  {
+    "name": "AgentSessionId",
+    "type": "string"
+  },
+  {
+    "name": "ProxySessionId",
+    "type": "string"
+  },
+  {
+    "name": "ServerName",
+    "type": "string"
+  },
+  {
+    "name": "UpstreamName",
+    "type": "string"
+  },
+  {
+    "name": "UpstreamVersion",
+    "type": "string"
+  },
+  {
+    "name": "ClientName",
+    "type": "string"
+  },
+  {
+    "name": "ClientVersion",
+    "type": "string"
+  },
+  {
+    "name": "ProtocolVersion",
+    "type": "string"
+  },
+  {
+    "name": "Method",
+    "type": "string"
+  },
+  {
+    "name": "RequestId",
+    "type": "string"
+  },
+  {
+    "name": "ToolName",
+    "type": "string"
+  },
+  {
+    "name": "ToolRisk",
+    "type": "string"
+  },
+  {
+    "name": "ArgKeys",
+    "type": "dynamic"
+  },
+  {
+    "name": "ArgsHmac",
+    "type": "string"
+  },
+  {
+    "name": "ArgsBytes",
+    "type": "int"
+  },
+  {
+    "name": "ResultBytes",
+    "type": "int"
+  },
+  {
+    "name": "LatencyMs",
+    "type": "real"
+  },
+  {
+    "name": "DecisionBasis",
+    "type": "string"
+  },
+  {
+    "name": "PolicyRule",
+    "type": "string"
+  },
+  {
+    "name": "DetectorId",
+    "type": "string"
+  },
+  {
+    "name": "RuleId",
+    "type": "string"
+  },
+  {
+    "name": "MatchSummary",
+    "type": "string"
+  },
+  {
+    "name": "Location",
+    "type": "string"
+  },
+  {
+    "name": "Mitre",
+    "type": "dynamic"
+  },
+  {
+    "name": "Owasp",
+    "type": "dynamic"
+  },
+  {
+    "name": "PolicySha256",
+    "type": "string"
+  },
+  {
+    "name": "Host",
+    "type": "string"
+  },
+  {
+    "name": "OsPlatform",
+    "type": "string"
+  },
+  {
+    "name": "ProcessId",
+    "type": "int"
+  },
+  {
+    "name": "GatehouseVersion",
+    "type": "string"
+  },
+  {
+    "name": "SchemaVersion",
+    "type": "int"
+  },
+  {
+    "name": "Details",
+    "type": "dynamic"
+  }
+]

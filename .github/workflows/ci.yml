@@ -91,3 +91,19 @@ jobs:
           python-version: "3.12"
       - run: uv sync --locked
       - run: uv run python -m detections.kusto --url http://localhost:8080 --wait 300
+
+  infra:
+    # Compile only; nothing is deployed. Fails on errors and on BCP081 (a resource type or
+    # API version missing from Bicep's type index), so a wrong API version can't slip in.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: az bicep install
+      - name: Build Bicep
+        run: |
+          set -o pipefail
+          az bicep build --file infra/main.bicep --stdout 2>build.log >/dev/null || { cat build.log; exit 1; }
+          cat build.log
+          if grep -q "BCP081" build.log; then echo "unknown resource type or API version"; exit 1; fi
+      - name: Build parameters file
+        run: az bicep build-params --file infra/main.bicepparam --stdout >/dev/null

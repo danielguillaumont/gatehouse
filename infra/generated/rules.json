@@ -1,0 +1,348 @@
+[
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7001",
+    "file": "GH001_rug_pull.yaml",
+    "properties": {
+      "displayName": "gatehouse - MCP tool definition changed after approval (rug pull)",
+      "description": "A tool's definition (description, schema or annotations) no longer matches the pin\nthat was approved for it, and gatehouse removed the tool from the agent's view. A\nchanged description is the classic MCP \"rug pull\": a server that was trusted when it was\ninstalled starts shipping instructions to the model later. Triage: run `gatehouse diff`\nagainst the server and compare ChangedFields. Re-approve legitimate upgrades with\n`gatehouse pin`.",
+      "severity": "High",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType == \"detection\" and DetectorId == \"listing.pin_mismatch\"\n| extend PinnedSha256 = tostring(Details.PinnedSha256),\n         CurrentSha256 = tostring(Details.CurrentSha256)\n| mv-expand ChangedField = Details.ChangedFields to typeof(string)\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Occurrences = dcount(EventId), Sessions = dcount(AgentSessionId),\n            ChangedFields = make_set(ChangedField, 10), PinnedSha256 = take_any(PinnedSha256)\n    by Host, ServerName, UpstreamName, ToolName, CurrentSha256",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "InitialAccess",
+        "Persistence"
+      ],
+      "techniques": [
+        "T1195"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "ServerName": "ServerName",
+        "ToolName": "ToolName"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "MCP rug pull: {{ServerName}}/{{ToolName}} changed after approval"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7002",
+    "file": "GH002_unapproved_tool.yaml",
+    "properties": {
+      "displayName": "gatehouse - Unapproved MCP tool offered or invoked",
+      "description": "Either an MCP server offered a tool that was never approved (strict pinning, or a tool\nadded after the server was first trusted), or the agent tried to call a tool it was\nnever shown (unlisted, filtered or stale). Calls to hidden tools point to a hidden\ncapability or to a model steered by injected instructions. One row per session, server\nand tool.",
+      "severity": "Medium",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where (EventType == \"detection\" and DetectorId == \"listing.unpinned\")\n    or (EventType == \"tool.call\" and Action == \"blocked\"\n        and DecisionBasis in (\"unlisted_tool\", \"stale_tool_list\"))\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            TimesOffered = countif(EventType == \"detection\"),\n            BlockedCalls = countif(EventType == \"tool.call\"),\n            Rules = make_set(RuleId, 5), Risk = take_any(ToolRisk)\n    by Host, AgentSessionId, ServerName, ToolName",
+      "queryFrequency": "PT1H",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Execution",
+        "Persistence"
+      ],
+      "techniques": [
+        "T1059",
+        "T1195"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "ServerName": "ServerName",
+        "ToolName": "ToolName",
+        "BlockedCalls": "BlockedCalls"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "Unapproved MCP tool {{ServerName}}/{{ToolName}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7003",
+    "file": "GH003_secret_to_egress_tool.yaml",
+    "properties": {
+      "displayName": "gatehouse - Credential sent to an egress or exec MCP tool",
+      "description": "A credential (cloud key, token, private key, connection string, and so on) was found in\nthe arguments of a tool that can send data out or run code. The Action column shows\nwhether gatehouse blocked it, which depends on the policy. The secret itself is never\nlogged: MatchSummary is masked and MatchFingerprint is an HMAC, so the same leaked\nsecret can be tracked across sessions without being disclosed. Triage: if Action is not\nblocked, rotate the credential.",
+      "severity": "High",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType == \"detection\" and DetectorId == \"args.secrets\"\n| where ToolRisk in (\"egress\", \"exec\")\n| extend Fingerprint = tostring(Details.MatchFingerprint)\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Attempts = count(), Actions = make_set(Action, 5),\n            Locations = make_set(Location, 10), Masked = take_any(MatchSummary)\n    by Host, AgentSessionId, ServerName, ToolName, ToolRisk, RuleId, Fingerprint",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Exfiltration",
+        "CredentialAccess"
+      ],
+      "techniques": [
+        "T1552",
+        "T1567"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "ServerName": "ServerName",
+        "ToolName": "ToolName",
+        "SecretType": "RuleId"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "{{RuleId}} sent to {{ToolRisk}} tool {{ServerName}}/{{ToolName}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7004",
+    "file": "GH004_guardrail_tampering.yaml",
+    "properties": {
+      "displayName": "gatehouse - Guardrail tampering or telemetry loss",
+      "description": "Something tried to weaken gatehouse itself or the SOC's visibility into it. Any of\nthese fires the rule:\n- policy.tampered: the policy file changed on disk during a session.\n- policy.load_failed: the policy failed to load, so gatehouse blocks every call.\n- args.self_protect: an agent tool call referenced gatehouse's own policy, pins, key or\n  logs.\n- gatehouse.fail_open: telemetry was lost (the one fail-open path in ADR-0001).\nAn agent editing its own guardrails maps to Impair Defenses.",
+      "severity": "High",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType in (\"policy.tampered\", \"policy.load_failed\", \"gatehouse.fail_open\")\n    or (EventType == \"detection\" and DetectorId == \"args.self_protect\")\n| extend Signal = iff(EventType == \"detection\", DetectorId, EventType)\n| project TimeGenerated, Host, AgentSessionId, ServerName, Signal, Severity, Action,\n          Reason, ToolName, Location, PolicySha256",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "DefenseEvasion"
+      ],
+      "techniques": [
+        "T1562"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "Signal": "Signal",
+        "ServerName": "ServerName"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "gatehouse guardrail signal: {{Signal}} on {{Host}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7005",
+    "file": "GH005_blocked_call_burst.yaml",
+    "properties": {
+      "displayName": "gatehouse - Burst of blocked MCP tool calls in one agent session",
+      "description": "Ten or more tool calls from the same agent session were blocked within five minutes.\nA single block is routine. A burst means the agent keeps retrying something the policy\nforbids, usually because injected instructions are steering it or because it is\nprobing for hidden tools. AgentSessionId groups all gatehouse wrappers under one agent\nprocess, so the count spans servers.",
+      "severity": "Medium",
+      "enabled": true,
+      "query": "let threshold = 10;\nGatehouseEvents_CL\n| where EventType == \"tool.call\" and Action in (\"blocked\", \"denied\", \"approval_required\")\n| summarize BlockedCalls = count(), Servers = make_set(ServerName, 10),\n            Tools = make_set(ToolName, 20), Reasons = make_set(DecisionBasis, 10),\n            FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Host = take_any(Host)\n    by AgentSessionId, Window = bin(TimeGenerated, 5m)\n| where BlockedCalls >= threshold",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Discovery",
+        "Execution"
+      ],
+      "techniques": [
+        "T1059"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "BlockedCalls": "BlockedCalls"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "{{BlockedCalls}} blocked MCP tool calls in one agent session"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7006",
+    "file": "GH006_injection_then_egress.yaml",
+    "properties": {
+      "displayName": "gatehouse - Prompt injection followed by egress on another MCP server",
+      "description": "A tool result on one MCP server contained a prompt-injection or exfiltration-beacon\nfinding, and within 10 minutes the same agent session called an egress or exec tool on\na *different* server. Each gatehouse wrapper sees one server, so neither event alone\nshows the attack chain; AgentSessionId joins them. The injected result may have been\nwithheld (Action = blocked) and the agent still acted, for example because the same\ncontent reached it another way, or the policy only logs findings. Triage: read the\ninjection finding's MatchSummary and RuleId, then check what the egress call sent\n(ArgsHmac lets you match it against other sessions without seeing the arguments).",
+      "severity": "High",
+      "enabled": true,
+      "query": "let window = 10m;\nlet injections = GatehouseEvents_CL\n    | where EventType == \"detection\" and Direction == \"server_to_client\"\n    | where DetectorId in (\"response.injection\", \"response.exfil_url\")\n    | summarize InjectionTime = min(TimeGenerated), InjectionRules = make_set(RuleId, 10),\n                InjectionAction = take_any(Action), InjectionSummary = take_any(MatchSummary)\n        by AgentSessionId, Host, SourceServer = ServerName, SourceTool = ToolName;\nlet egress = GatehouseEvents_CL\n    | where EventType == \"tool.call\" and ToolRisk in (\"egress\", \"exec\")\n    | project EgressTime = TimeGenerated, AgentSessionId, EgressServer = ServerName,\n              EgressTool = ToolName, EgressRisk = ToolRisk, EgressAction = Action, ArgsHmac;\ninjections\n| join kind=inner egress on AgentSessionId\n| where EgressServer != SourceServer\n| where EgressTime between (InjectionTime .. (InjectionTime + window))\n| summarize FirstEgress = min(EgressTime), EgressCalls = count(),\n            EgressTools = make_set(strcat(EgressServer, \"/\", EgressTool), 10),\n            EgressActions = make_set(EgressAction, 5)\n    by AgentSessionId, Host, SourceServer, SourceTool, InjectionTime,\n       tostring(InjectionRules), InjectionAction, InjectionSummary",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT30M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Execution",
+        "Exfiltration"
+      ],
+      "techniques": [
+        "T1059",
+        "T1567"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "SourceServer": "SourceServer",
+        "SourceTool": "SourceTool",
+        "EgressTools": "EgressTools"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "Injection from {{SourceServer}}/{{SourceTool}} followed by egress on another server"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  }
+]
