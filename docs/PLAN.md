@@ -169,6 +169,10 @@ Trust boundaries: agent ↔ gatehouse, gatehouse ↔ server, server ↔ its own 
 ATLAS was renamed (ML → AI) and extended with agent techniques in 2025: verify every ID
 against the current release and record the ATLAS version in `threat-model.md`.
 
+> **Superseded (2026-11-24):** the IDs in this table were checked against ATLAS 2026.10
+> and several were remapped (AML.T0057 no longer exists). `docs/threat-model.md` is the
+> source of truth; `tests/test_atlas_ids.py` enforces it.
+
 **Non-goals**: a malicious server misusing data it legitimately received or making its own
 network calls; a compromised host or client; guaranteed prompt-injection prevention
 (deterministic detection is inherently incomplete — gatehouse is defense-in-depth and signal).

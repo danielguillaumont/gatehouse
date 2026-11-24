@@ -5,7 +5,7 @@
   milestone: mvp
   title: Tool description changes after first use (server restart)
   owasp: [LLM03]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   phases:
     - server:
         tools:
@@ -28,7 +28,7 @@
   milestone: mvp
   title: Parameter description in inputSchema poisoned after first use
   owasp: [LLM03, LLM01]
-  atlas: [AML.T0010, AML.T0051.001]
+  atlas: [AML.T0010.005, AML.T0051.001]
   phases:
     - server:
         tools:
@@ -54,7 +54,7 @@
   milestone: mvp
   title: Definition swapped mid-session with notifications/tools/list_changed
   owasp: [LLM03]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   server:
     tools:
       - name: search_docs
@@ -75,7 +75,7 @@
   milestone: mvp
   title: Client calls a rug-pulled tool by name even though it was hidden
   owasp: [LLM03, LLM06]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   phases:
     - server:
         tools:
@@ -96,7 +96,7 @@
   milestone: mvp
   title: Two tools with the same name, one malicious (client picks either)
   owasp: [LLM03]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   server:
     tools:
       - name: read_notes
@@ -113,7 +113,7 @@
   milestone: mvp
   title: A new tool appears after approval (allowed under TOFU, blocked under strict)
   owasp: [LLM03]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   phases:
     - server:
         tools:

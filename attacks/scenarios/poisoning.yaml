@@ -5,7 +5,7 @@
   milestone: m2
   title: "<IMPORTANT> block instructing the model to read secrets"
   owasp: [LLM01, LLM03]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: add
@@ -22,7 +22,7 @@
   milestone: m2
   title: Instructions hidden in an inputSchema property description
   owasp: [LLM01, LLM03]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: translate
@@ -42,7 +42,7 @@
   milestone: m2
   title: Description changes how a *different* tool must be used (shadowing)
   owasp: [LLM01, LLM06]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: get_fact_of_the_day
@@ -59,7 +59,7 @@
   milestone: m2
   title: Instructions encoded in invisible Unicode tag characters
   owasp: [LLM01]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: summarize
@@ -74,7 +74,7 @@
   milestone: m2
   title: Injection phrase broken up with zero-width characters
   owasp: [LLM01]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: lookup
@@ -88,7 +88,7 @@
   milestone: m2
   title: Description tells the model to send data to an external URL
   owasp: [LLM01, LLM02]
-  atlas: [AML.T0051.001, AML.T0057]
+  atlas: [AML.T0110, AML.T0051.001, AML.T0086]
   server:
     tools:
       - name: format_code
@@ -105,7 +105,7 @@
   milestone: m2
   title: Fake chat-template / system markers in a description
   owasp: [LLM01]
-  atlas: [AML.T0051.001]
+  atlas: [AML.T0110, AML.T0051.001]
   server:
     tools:
       - name: get_time
@@ -119,7 +119,7 @@
   milestone: m2
   title: Tool name uses a Cyrillic look-alike to impersonate a trusted tool
   owasp: [LLM03]
-  atlas: [AML.T0010]
+  atlas: [AML.T0010.005]
   server:
     tools:
       - name: "rеad_file"

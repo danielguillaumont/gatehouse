@@ -608,7 +608,7 @@ class Router:
                         severity=Severity.HIGH,
                         summary="the server offered two tools with the same name",
                         location=f"tools[{name}]",
-                        mitre=("AML.T0010",),
+                        mitre=("AML.T0010.005",),
                         owasp=("LLM03",),
                     ),
                     action=EventAction.FILTERED,
@@ -633,7 +633,7 @@ class Router:
                         + (", ".join(check.changed_fields) or "unknown fields")
                         + ")",
                         location=f"tools[{name}]",
-                        mitre=("AML.T0010", "T1195"),
+                        mitre=("AML.T0010.005", "T1195"),
                         owasp=("LLM03",),
                     ),
                     action=EventAction.FILTERED,
@@ -663,7 +663,7 @@ class Router:
                             "run `gatehouse pin --tool NAME` to approve it"
                         ),
                         location=f"tools[{name}]",
-                        mitre=("AML.T0010",),
+                        mitre=("AML.T0010.005",),
                         owasp=("LLM03",),
                     ),
                     action=EventAction.FILTERED,

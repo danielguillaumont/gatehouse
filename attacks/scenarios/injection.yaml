@@ -36,7 +36,7 @@
   milestone: m2
   title: Markdown image whose URL carries data to an attacker (zero-click exfil)
   owasp: [LLM01, LLM02]
-  atlas: [AML.T0051.001, AML.T0057]
+  atlas: [AML.T0051.001, AML.T0086]
   server:
     <<: *fetch
     results:

@@ -4,7 +4,7 @@
   milestone: mvp
   title: Duplicate "method" key hides a tools/call behind tools/list
   owasp: [LLM06]
-  atlas: [AML.T0051]
+  atlas: [AML.T0053]
   canaries: [AKIAZQ3CANARY7DUPKY3]
   server: &send
     tools:
@@ -21,7 +21,7 @@
   milestone: mvp
   title: tools/call inside a JSON-RPC batch
   owasp: [LLM06]
-  atlas: [AML.T0051]
+  atlas: [AML.T0053]
   canaries: [AKIAZQ3CANARY7BATCH4]
   server: *send
   steps:

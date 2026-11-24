@@ -153,3 +153,15 @@ be tested there, and the rules avoid them. The sample data comes from real gateh
 sessions, scrubbed of host names and paths. The one exception is a single synthetic
 `gatehouse.fail_open` row, marked `Details.Synthetic`. Alternative considered: a
 free-tier ADX cluster. Rejected because it needs an account and network access in CI.
+
+**D-028 (2026-11-24) MITRE ATLAS IDs follow release 2026.10.** I checked them against
+`mitre-atlas/atlas-data` `dist/v6/ATLAS-2026.10.yaml`. AML.T0057 (LLM Data Leakage) no
+longer exists: it was folded into "Data from AI Services". Data leaving through a tool
+argument now maps to AML.T0086 (Exfiltration via AI Agent Tool Invocation). The other
+remaps:
+- rug pulls and look-alikes: AML.T0010.005 (Supply Chain Compromise: AI Agent Tool)
+- tool poisoning: adds AML.T0110 (AI Agent Tool Poisoning)
+- self-protection: AML.T0081 (Modify AI Agent Configuration)
+- sensitive paths: AML.T0098 (AI Agent Tool Credential Harvesting)
+- protocol smuggling: AML.T0053 (AI Agent Tool Invocation), not prompt injection
+`tests/test_atlas_ids.py` fails if any ID outside the verified list appears.

@@ -16,7 +16,7 @@ from gatehouse.inspect.base import Finding
 from gatehouse.inspect.walk import WalkStats, iter_strings
 
 DETECTOR_ID = "args.secrets"
-_MITRE = ("AML.T0057", "T1552")
+_MITRE = ("AML.T0086", "T1552")
 _OWASP = ("LLM02",)
 
 

@@ -79,7 +79,7 @@ def detect_self_protect(
                         severity=Severity.HIGH,
                         summary=f"argument references a gatehouse-protected path ({p})",
                         location=where,
-                        mitre=("T1562.001",),
+                        mitre=("AML.T0081", "T1562.001"),
                         owasp=("LLM06",),
                     )
                 )
