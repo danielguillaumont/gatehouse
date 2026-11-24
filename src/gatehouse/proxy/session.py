@@ -41,6 +41,9 @@ class Session:
     # tools visible to the client; None until a tools/list result has been inspected
     tools: dict[str, ToolInfo] | None = None
     tools_stale: bool = False
+    # TOFU window: True while the first listing of a server with no pins is being read
+    # (including its pagination pages). Tools that appear after it closes are not trusted.
+    tofu_window: bool | None = None
     client_capabilities: dict[str, Any] = field(default_factory=dict[str, Any])
     requested_version: str | None = None
     negotiated_version: str | None = None

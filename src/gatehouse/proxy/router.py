@@ -574,6 +574,13 @@ class Router:
         store = self._load_pins() if mode is not PinningMode.OFF else PinStore()
         pins = store.server(server).tools if store is not None else {}
 
+        if mode is PinningMode.TOFU and store is not None:
+            if self.session.tofu_window is None:
+                self.session.tofu_window = not pins
+            elif not pending.has_cursor:
+                self.session.tofu_window = False
+        tofu_open = bool(self.session.tofu_window)
+
         defs = [d for d in (as_obj(t) for t in offered) if d is not None]
         names = [n for n in (as_str(d.get("name")) for d in defs) if n is not None]
         duplicates = {n for n in names if names.count(n) > 1}
@@ -639,14 +646,22 @@ class Router:
                 )
                 filtered.append(name)
                 continue
-            if mode is PinningMode.STRICT and check.status is PinStatus.UNPINNED:
+            untrusted_new = check.status is PinStatus.UNPINNED and (
+                mode is PinningMode.STRICT or (mode is PinningMode.TOFU and not tofu_open)
+            )
+            if untrusted_new:
+                strict = mode is PinningMode.STRICT
                 self.emit.emit_finding(
                     Finding(
                         detector_id="listing.unpinned",
-                        rule_id="tool-not-pinned",
+                        rule_id="tool-not-pinned" if strict else "new-tool-on-pinned-server",
                         severity=Severity.MEDIUM,
-                        summary="tool is not pinned (strict mode); "
-                        "run `gatehouse pin` to approve it",
+                        summary=(
+                            "tool is not pinned (strict mode); run `gatehouse pin` to approve it"
+                            if strict
+                            else "new tool appeared after this server was first trusted; "
+                            "run `gatehouse pin --tool NAME` to approve it"
+                        ),
                         location=f"tools[{name}]",
                         mitre=("AML.T0010",),
                         owasp=("LLM03",),
@@ -672,7 +687,7 @@ class Router:
                 filtered.append(name)
                 continue
 
-            if mode is PinningMode.TOFU and check.status is PinStatus.UNPINNED:
+            if mode is PinningMode.TOFU and check.status is PinStatus.UNPINNED and tofu_open:
                 to_pin[name] = tdef
             kept.append(tdef)
             visible[name] = ToolInfo(

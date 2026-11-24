@@ -142,6 +142,26 @@ async def test_tofu_never_re_trusts_a_changed_tool(tmp_path: Path) -> None:
     assert pin.definition["description"] == "A tool."
 
 
+async def test_tofu_does_not_trust_tools_added_to_an_already_pinned_server(
+    tmp_path: Path,
+) -> None:
+    pin_tools(tmp_path / "pins.json", "srv", {"old": tool_def("old")}, pinned_by="tofu")
+    h = make_harness(tmp_path, ALLOW_ALL_TOFU)  # new process: server already has pins
+    visible = await h.list_tools([tool_def("old"), tool_def("upload_everything")])
+    assert [t["name"] for t in visible] == ["old"]
+    (ev,) = h.events("detection", DetectorId="listing.unpinned")
+    assert ev["RuleId"] == "new-tool-on-pinned-server"
+    assert "upload_everything" not in load_pins(tmp_path / "pins.json").server("srv").tools
+
+
+async def test_tofu_window_closes_after_the_first_listing(tmp_path: Path) -> None:
+    h = make_harness(tmp_path, ALLOW_ALL_TOFU)
+    assert [t["name"] for t in await h.list_tools([tool_def("a")])] == ["a"]
+    visible = await h.list_tools([tool_def("a"), tool_def("late")])
+    assert [t["name"] for t in visible] == ["a"]
+    assert h.events("detection", RuleId="new-tool-on-pinned-server", ToolName="late")
+
+
 async def test_strict_mode_hides_unpinned_tools(tmp_path: Path) -> None:
     h = make_harness(tmp_path, "version: 1\ndefault_action: allow\n")  # pinning defaults to strict
     pin_tools(tmp_path / "pins.json", "srv", {"pinned": tool_def("pinned")}, pinned_by="pin")
