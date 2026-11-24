@@ -1,7 +1,6 @@
 # Where work stopped and what's next
 
-Last updated **2026-11-24**. Status: MVP Day 7. The code is done; the docs are in
-progress.
+Last updated **2026-11-24**. Status: **MVP complete**; M2 (content detectors) started.
 
 ## State
 
@@ -35,27 +34,20 @@ progress.
 
 ## Next steps, in order
 
-1. **MVP docs:**
-   - `docs/architecture.md`
-   - `docs/threat-model.md`: verify the ATLAS IDs against the current ATLAS release and
-     record the version
-   - `docs/event-schema.md`
-   - `docs/evaluation.md`, with the attack-suite and benchmark numbers plus the commands
-     to reproduce them
-   - `docs/known-bypasses.md`
-   - update `docs/policy.md` for the `pinning:` and `findings:` sections and TOFU (D-023)
-2. **Rewrite `README.md`.** Commit. That completes the MVP.
-3. **M2:**
-   - content detectors in `inspect/`: poisoning, injection, exfil URL, invisible Unicode,
-     commands, paths, PII
-   - elicitation approval
-   - Sentinel Logs Ingestion sink, Bicep, `docs/sentinel-setup.md`
-   - a cross-server KQL rule
+1. **M2 content detectors.** `inspect/invisible.py` is written but not wired or tested.
+   Next: `poisoning.py`, `injection.py`, `commands.py`, `paths.py`, `pii.py`, plus the
+   zero-width and base64 secret variants. Wire them in `inspect/pipeline.py`, run the
+   attack suite, and keep benign false positives at 0.
+2. **Elicitation approval:** make `RouterConfig.approver` non-blocking.
+3. **Sentinel:** the Logs Ingestion sink (`sentinel` extra), Bicep (DCR, table, rules),
+   `docs/sentinel-setup.md`, and a cross-server KQL rule (injection followed by egress).
 4. **M3:**
-   - evaluation v1, with held-out paraphrases
+   - held-out paraphrase scenarios
    - competitor runs (gateward, mcp-watchdog) in CI only
-   - finalize `docs/prior-art.md`
+   - finalize `docs/prior-art.md` and `docs/evaluation.md`
    - `docs/interview-guide.md`
+5. **Latency:** p95 overhead at 1 KiB is 5.2 ms against a 5 ms target. Profile the
+   per-call event writes.
 
 ## Caveats
 

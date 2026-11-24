@@ -84,6 +84,61 @@ Treat policy as **one layer**:
 - Prefer allowlists (`default_action: block`). Against a dishonest server, a denylist of
   dangerous names is the weakest form of policy.
 
+## Pinning
+
+```yaml
+pinning: strict            # optional, global: strict (default) | tofu | "off"
+servers:
+  "scratch-*":
+    pinning: tofu          # per-server override; a server block may set only pinning
+```
+
+A pin is the SHA-256 of a tool's canonical definition: name, title, description,
+inputSchema, outputSchema and annotations. Pins live in the pin store (`pins.json` in the
+state directory, or `--pins`).
+
+| Mode | Unpinned tool | Pinned tool whose definition changed |
+|---|---|---|
+| `strict` (default) | hidden (`listing.unpinned/tool-not-pinned`) until `gatehouse pin` | hidden (`listing.pin_mismatch`) |
+| `tofu` | pinned automatically **only in the first listing of a server that has no pins yet**; tools that appear later are hidden (`listing.unpinned/new-tool-on-pinned-server`) until `gatehouse pin --tool NAME` | hidden (`listing.pin_mismatch`), never re-trusted automatically |
+| `"off"` | visible | visible, and calls to tools that were never listed are allowed |
+
+Hidden tools can't be called: a `tools/call` for a tool the client wasn't shown is
+blocked (`DecisionBasis = unlisted_tool`), and so is a call made after
+`notifications/tools/list_changed` and before the client lists tools again
+(`stale_tool_list`).
+
+The per-server override uses the most specific matching server pattern. Equally specific
+patterns resolve to the strictest mode.
+
+**Quote `"off"`.** YAML 1.1 reads a bare `off` as the boolean `false`, which the schema
+rejects (and then gatehouse fails closed).
+
+Why TOFU covers only the first listing (D-023): if a newly added tool on an
+already-trusted server were trusted automatically, adding an `upload_everything` tool
+would be a silent rug pull. The attack suite's `rugpull.new-tool-added` scenario covers
+this.
+
+## Findings
+
+Detectors report findings with a severity. `findings:` maps severity to what gatehouse
+does:
+
+```yaml
+findings:                  # optional; these are the defaults
+  critical: block
+  high: block
+  medium: log
+  low: log
+  informational: log
+```
+
+`block` stops the call (or hides the tool, or withholds the result). `require_approval`
+asks the user through MCP elicitation when the client supports it, and blocks otherwise.
+`log` lets the traffic through and records the detection. When several findings apply,
+the strictest action wins. A finding can only make the policy decision stricter: a
+`log` finding never turns a policy `block` into an allow.
+
 ## Load errors → fail closed
 
 Any problem loading the policy makes gatehouse **block every call** and emit one
