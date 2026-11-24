@@ -27,6 +27,10 @@ class SecretRule:
     pattern: re.Pattern[str]
     severity: Severity
     group: int = 1  # capture group holding the secret value
+    # Lower-case literals; the regex only runs if one occurs in the lower-cased text.
+    # Every match of ``pattern`` must contain one of them (tested), so this is a pure
+    # speed-up (gitleaks-style keyword prefilter). Empty = always run.
+    keywords: tuple[str, ...] = ()
 
 
 def _r(pattern: str, flags: int = 0) -> re.Pattern[str]:
@@ -40,12 +44,14 @@ SECRET_RULES: tuple[SecretRule, ...] = (
         "PEM private key header",
         _r(r"(-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY(?: BLOCK)?-----)"),
         Severity.CRITICAL,
+        keywords=("private key",),
     ),
     SecretRule(
         "aws-access-key-id",
         "AWS access key ID",
         _r(r"(?<![A-Za-z0-9])((?:AKIA|ASIA|ABIA|ACCA)[A-Z0-9]{16})(?![A-Za-z0-9])"),
         Severity.HIGH,
+        keywords=("akia", "asia", "abia", "acca"),
     ),
     SecretRule(
         "aws-secret-access-key",
@@ -55,72 +61,84 @@ SECRET_RULES: tuple[SecretRule, ...] = (
             re.IGNORECASE,
         ),
         Severity.CRITICAL,
+        keywords=("aws",),
     ),
     SecretRule(
         "github-token",
         "GitHub token",
         _r(r"(?<![A-Za-z0-9])(gh[pousr]_[A-Za-z0-9]{36,255})(?![A-Za-z0-9])"),
         Severity.HIGH,
+        keywords=("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
     ),
     SecretRule(
         "github-fine-grained-pat",
         "GitHub fine-grained personal access token",
         _r(r"(?<![A-Za-z0-9])(github_pat_[A-Za-z0-9_]{50,255})"),
         Severity.HIGH,
+        keywords=("github_pat_",),
     ),
     SecretRule(
         "gitlab-pat",
         "GitLab personal access token",
         _r(r"(?<![A-Za-z0-9])(glpat-[A-Za-z0-9_\-]{20,64})"),
         Severity.HIGH,
+        keywords=("glpat-",),
     ),
     SecretRule(
         "slack-token",
         "Slack token",
         _r(r"(?<![A-Za-z0-9])(xox[abprs]-[A-Za-z0-9-]{10,250})"),
         Severity.HIGH,
+        keywords=("xox",),
     ),
     SecretRule(
         "slack-webhook",
         "Slack incoming webhook URL",
         _r(r"(https://hooks\.slack\.com/services/[A-Za-z0-9/_\-]{20,200})"),
         Severity.HIGH,
+        keywords=("hooks.slack.com",),
     ),
     SecretRule(
         "stripe-live-key",
         "Stripe live secret/restricted key",
         _r(r"(?<![A-Za-z0-9])((?:sk|rk)_live_[A-Za-z0-9]{20,250})"),
         Severity.CRITICAL,
+        keywords=("_live_",),
     ),
     SecretRule(
         "google-api-key",
         "Google API key",
         _r(r"(?<![A-Za-z0-9])(AIza[0-9A-Za-z_\-]{35})"),
         Severity.HIGH,
+        keywords=("aiza",),
     ),
     SecretRule(
         "anthropic-api-key",
         "Anthropic API key",
         _r(r"(?<![A-Za-z0-9])(sk-ant-[A-Za-z0-9_\-]{20,250})"),
         Severity.HIGH,
+        keywords=("sk-ant-",),
     ),
     SecretRule(
         "openai-api-key",
         "OpenAI-style API key",
         _r(r"(?<![A-Za-z0-9])(sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_\-]{32,250})"),
         Severity.HIGH,
+        keywords=("sk-",),
     ),
     SecretRule(
         "azure-storage-account-key",
         "Azure Storage account key in a connection string",
         _r(r"(AccountKey=[A-Za-z0-9+/]{86}==)", re.IGNORECASE),
         Severity.CRITICAL,
+        keywords=("accountkey=",),
     ),
     SecretRule(
         "azure-sas-signature",
         "Azure shared access signature",
         _r(r"[?&](sig=[A-Za-z0-9%+/]{30,200}(?:%3D|=){0,2})", re.IGNORECASE),
         Severity.HIGH,
+        keywords=("sig=",),
     ),
     SecretRule(
         "entra-client-secret",
@@ -129,6 +147,7 @@ SECRET_RULES: tuple[SecretRule, ...] = (
             r"(?<![A-Za-z0-9_~.\-])([A-Za-z0-9_~.\-]{3}\dQ~[A-Za-z0-9_~.\-]{31,34})(?![A-Za-z0-9_~.\-])"
         ),
         Severity.HIGH,
+        keywords=("q~",),
     ),
     SecretRule(
         "jwt",
@@ -137,6 +156,7 @@ SECRET_RULES: tuple[SecretRule, ...] = (
             r"(?<![A-Za-z0-9])(eyJ[A-Za-z0-9_\-]{8,4096}\.eyJ[A-Za-z0-9_\-]{8,8192}\.[A-Za-z0-9_\-]{8,4096})"
         ),
         Severity.HIGH,
+        keywords=("eyj",),
     ),
     SecretRule(
         "url-credentials",
@@ -146,6 +166,7 @@ SECRET_RULES: tuple[SecretRule, ...] = (
             re.IGNORECASE,
         ),
         Severity.HIGH,
+        keywords=("://",),
     ),
     SecretRule(
         "generic-assignment",
@@ -156,6 +177,7 @@ SECRET_RULES: tuple[SecretRule, ...] = (
             re.IGNORECASE,
         ),
         Severity.MEDIUM,
+        keywords=("password", "passwd", "pwd", "secret", "api", "access"),
     ),
 )
 
@@ -181,7 +203,10 @@ def find_secrets(text: str) -> list[SecretMatch]:
     """All non-overlapping secret matches in ``text`` (earliest rule wins on overlap)."""
     taken: list[tuple[int, int]] = []
     found: list[SecretMatch] = []
+    lowered = text.lower()
     for rule in SECRET_RULES:
+        if rule.keywords and not any(k in lowered for k in rule.keywords):
+            continue
         for m in rule.pattern.finditer(text):
             start, end = m.span(rule.group)
             if any(start < t_end and t_start < end for t_start, t_end in taken):

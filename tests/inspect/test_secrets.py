@@ -106,3 +106,22 @@ def test_patterns_are_fast_on_adversarial_input() -> None:
     start = time.perf_counter()
     find_secrets(hostile)
     assert time.perf_counter() - start < 2.0
+
+
+@pytest.mark.parametrize(("rule_id", "text"), sorted(POSITIVES.items()))
+def test_keyword_prefilter_never_hides_a_match(rule_id: str, text: str) -> None:
+    """Every regex match must contain one of the rule's keywords (lower-cased)."""
+    from gatehouse.inspect.secrets import SECRET_RULES
+
+    rule = next(r for r in SECRET_RULES if r.rule_id == rule_id)
+    for variant in (text, text.upper(), text.lower(), f"x {text} y"):
+        for m in rule.pattern.finditer(variant):
+            assert any(k in m.group(0).lower() for k in rule.keywords), (rule_id, variant)
+
+
+def test_every_rule_has_keywords_and_a_positive_example() -> None:
+    from gatehouse.inspect.secrets import SECRET_RULES
+
+    for rule in SECRET_RULES:
+        assert rule.keywords, rule.rule_id
+        assert rule.rule_id in POSITIVES, rule.rule_id
