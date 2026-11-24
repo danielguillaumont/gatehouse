@@ -20,6 +20,7 @@ class PolicyErrorKind(StrEnum):
     DUPLICATE_KEY = "duplicate_key"
     ALIAS = "alias"  # YAML anchors / aliases / merge keys
     SCHEMA = "schema"  # valid YAML, invalid policy
+    INTEGRITY = "integrity"  # hash does not match --expect-policy-sha256
     INTERNAL = "internal"  # bug in gatehouse: still fails closed
 
 

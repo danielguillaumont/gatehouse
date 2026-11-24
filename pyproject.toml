@@ -4,17 +4,34 @@ version = "0.1.0"
 description = "Detection-engineering and SOC layer for AI agent tool use over MCP"
 readme = "README.md"
 requires-python = ">=3.11"
+# Deliberately small runtime surface: gatehouse proxies JSON-RPC frames itself and does
+# not import the MCP SDK at runtime (see docs/decisions.md).
 dependencies = [
+    "anyio>=4.4,<5",
+    "psutil>=6,<8",
     "pydantic>=2.7,<3",
     "pyyaml>=6.0.1,<7",
 ]
 
+[project.optional-dependencies]
+# Ship events straight to Microsoft Sentinel via the Azure Monitor Logs Ingestion API.
+sentinel = [
+    "azure-identity>=1.17,<2",
+    "azure-monitor-ingestion>=1.0.4,<2",
+]
+
+[project.scripts]
+gatehouse = "gatehouse.cli:main"
+
 [dependency-groups]
 dev = [
+    # Exact pin: mock servers and interop tests run against this SDK version.
+    "mcp==2.3.0",
     "pytest>=8",
     "ruff>=0.6",
     "pyright>=1.1.380",
     "types-pyyaml",
+    "types-psutil",
 ]
 
 [build-system]
@@ -23,8 +40,12 @@ build-backend = "uv_build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests", "."]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 xfail_strict = true
+markers = [
+    "integration: spawns gatehouse and MCP server subprocesses",
+]
 
 [tool.ruff]
 line-length = 100
@@ -34,9 +55,18 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "B", "UP", "S", "RUF", "T20"]
 # S101: asserts are fine in tests. T20 bans print() — stdout belongs to the MCP protocol.
 # RUF001: tests deliberately contain Unicode look-alikes (that's what they test).
-per-file-ignores = { "tests/**" = ["S101", "RUF001"] }
+# S603/S607: tests, harness and benchmarks spawn subprocesses by design.
+# S101: asserts in src only narrow types on internal invariants (never validate input).
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/gatehouse/client.py" = ["S603"]  # spawns the server command the user asked for
+"tests/**" = ["S101", "RUF001", "S603", "S607", "S105", "S106"]
+"attacks/**" = ["S101", "RUF001", "S603", "S607", "S105", "S106"]
+"bench/**" = ["S603", "S607"]
+"demo/**" = ["S603", "S607"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "attacks", "bench", "demo"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"

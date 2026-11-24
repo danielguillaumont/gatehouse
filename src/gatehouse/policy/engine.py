@@ -20,7 +20,7 @@ from enum import StrEnum
 from pydantic import BaseModel, ConfigDict
 
 from gatehouse.policy.loader import PolicyLoad
-from gatehouse.policy.models import Action, CompiledRule, Policy
+from gatehouse.policy.models import Action, CompiledRule, PinningMode, Policy
 from gatehouse.policy.names import matches, normalize_name
 
 
@@ -110,6 +110,19 @@ def evaluate(policy: Policy, server: str, tool: str) -> Decision:
         _explain(winners, "equally specific rules disagree"),
         winners,
     )
+
+
+def pinning_mode(policy: Policy, server: str) -> PinningMode:
+    """Pinning mode for a server: most specific matching server block, else the global.
+
+    Ties between equally specific server patterns resolve to the strictest mode.
+    """
+    server_n = normalize_name(server)
+    hits = [(spec, mode) for pat, spec, mode in policy.pinning_overrides if matches(pat, server_n)]
+    if not hits:
+        return policy.pinning
+    best = max(spec for spec, _ in hits)
+    return max((mode for spec, mode in hits if spec == best), key=lambda m: m.strictness)
 
 
 def decide(load: PolicyLoad, server: str, tool: str) -> Decision:

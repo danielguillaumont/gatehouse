@@ -56,8 +56,46 @@ def _expand_shorthand(value: Any) -> Any:
 RuleSpec = Annotated[ToolRule, BeforeValidator(_expand_shorthand)]
 
 
+class PinningMode(StrEnum):
+    """How tool definitions are trusted (see docs/policy.md#pinning)."""
+
+    STRICT = "strict"  # only tools pinned with `gatehouse pin` are visible/callable
+    TOFU = "tofu"  # trust on first use: new tools are pinned automatically
+    OFF = "off"  # no pinning (not recommended)
+
+    @property
+    def strictness(self) -> int:
+        return {"off": 0, "tofu": 1, "strict": 2}[self.value]
+
+
+class FindingAction(StrEnum):
+    BLOCK = "block"
+    REQUIRE_APPROVAL = "require_approval"
+    LOG = "log"  # allow, but record the detection
+
+
+class FindingActions(_Strict):
+    """What to do when a detector reports a finding of a given severity."""
+
+    critical: FindingAction = FindingAction.BLOCK
+    high: FindingAction = FindingAction.BLOCK
+    medium: FindingAction = FindingAction.LOG
+    low: FindingAction = FindingAction.LOG
+    informational: FindingAction = FindingAction.LOG
+
+    def for_severity(self, severity: str) -> FindingAction:
+        return FindingAction(getattr(self, severity))
+
+
 class ServerBlock(_Strict):
-    tools: dict[Pattern, RuleSpec]
+    tools: dict[Pattern, RuleSpec] = Field(default_factory=dict[str, ToolRule])
+    pinning: PinningMode | None = None
+
+    @model_validator(mode="after")
+    def _not_empty(self) -> ServerBlock:
+        if not self.tools and self.pinning is None:
+            raise ValueError("server block must set `tools` and/or `pinning`")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,9 +136,12 @@ def _check_pattern(pattern: str, where: str) -> str:
 class Policy(_Strict):
     version: StrictInt
     default_action: Action
-    servers: dict[Pattern, ServerBlock] = Field(default_factory=dict)
+    pinning: PinningMode = PinningMode.STRICT
+    findings: FindingActions = Field(default_factory=FindingActions)
+    servers: dict[Pattern, ServerBlock] = Field(default_factory=dict[str, ServerBlock])
 
     _rules: tuple[CompiledRule, ...] = PrivateAttr(default=())
+    _pinning: tuple[tuple[str, Specificity, PinningMode], ...] = PrivateAttr(default=())
 
     @field_validator("version")
     @classmethod
@@ -114,6 +155,7 @@ class Policy(_Strict):
     @model_validator(mode="after")
     def _compile(self) -> Policy:
         rules: list[CompiledRule] = []
+        pinning: list[tuple[str, Specificity, PinningMode]] = []
         seen_servers: dict[str, str] = {}
         for server_pattern, block in self.servers.items():
             server_norm = _check_pattern(server_pattern, "server")
@@ -123,6 +165,8 @@ class Policy(_Strict):
                     "are identical after normalization"
                 )
             seen_servers[server_norm] = server_pattern
+            if block.pinning is not None:
+                pinning.append((server_norm, specificity(server_norm), block.pinning))
 
             seen_tools: dict[str, str] = {}
             for tool_pattern, rule in block.tools.items():
@@ -146,8 +190,13 @@ class Policy(_Strict):
                     )
                 )
         self._rules = tuple(rules)
+        self._pinning = tuple(pinning)
         return self
 
     @property
     def rules(self) -> tuple[CompiledRule, ...]:
         return self._rules
+
+    @property
+    def pinning_overrides(self) -> tuple[tuple[str, Specificity, PinningMode], ...]:
+        return self._pinning
