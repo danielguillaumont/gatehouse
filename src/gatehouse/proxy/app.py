@@ -14,6 +14,7 @@ from gatehouse import paths
 from gatehouse.events.emitter import Emitter, EventContext
 from gatehouse.events.fingerprint import Fingerprinter, load_or_create_key
 from gatehouse.events.schema import EventAction, EventType, Severity
+from gatehouse.events.sentinel import SentinelConfig, SentinelSink, azure_uploader
 from gatehouse.events.sinks import JsonlFileSink, Sink, StderrSink
 from gatehouse.inspect.pipeline import ScanConfig
 from gatehouse.inspect.self_protect import protected_variants
@@ -39,6 +40,7 @@ class RunOptions:
     max_frame_bytes: int = DEFAULT_MAX_FRAME_BYTES
     stderr_events: bool = True
     approval_timeout: float = 120.0
+    sentinel: SentinelConfig | None = None
     extra_sinks: list[Sink] = field(default_factory=list[Sink])
 
 
@@ -71,12 +73,26 @@ def build_emitter(opts: RunOptions, context: EventContext) -> Emitter:
             open_error = type(exc).__name__
     if opts.stderr_events:
         sinks.append(StderrSink())
+    sentinel_error: str | None = None
+    if opts.sentinel is not None:
+        try:
+            sinks.append(SentinelSink(azure_uploader(opts.sentinel)))
+        except Exception as exc:  # missing extra, bad endpoint: telemetry loss, not a stop
+            sys.stderr.write(f"gatehouse: Sentinel sink unavailable: {exc}\n")
+            sentinel_error = type(exc).__name__
     sinks.extend(opts.extra_sinks)
     emitter = Emitter(context, sinks)
     if open_error is not None:
         emitter.report_fail_open(
             f"cannot open the JSONL event log ({open_error}); traffic continues without it",
             EventsDir=str(opts.events_dir),
+        )
+    if sentinel_error is not None:
+        hint = " (install gatehouse[sentinel])" if sentinel_error == "ImportError" else ""
+        emitter.report_fail_open(
+            f"cannot start the Sentinel sink ({sentinel_error}){hint}; "
+            "traffic continues without it",
+            Sink="sentinel",
         )
     return emitter
 

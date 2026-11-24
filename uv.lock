@@ -441,6 +441,8 @@ sentinel = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "azure-identity" },
+    { name = "azure-monitor-ingestion" },
     { name = "mcp" },
     { name = "pyright" },
     { name = "pytest" },
@@ -462,6 +464,8 @@ provides-extras = ["sentinel"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "azure-identity", specifier = ">=1.27.0" },
+    { name = "azure-monitor-ingestion", specifier = ">=1.1.0" },
     { name = "mcp", specifier = "==2.3.0" },
     { name = "pyright", specifier = ">=1.1.380" },
     { name = "pytest", specifier = ">=8" },

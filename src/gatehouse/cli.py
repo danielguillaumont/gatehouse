@@ -19,6 +19,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from gatehouse import __version__, paths
+from gatehouse.events.sentinel import DEFAULT_STREAM, SentinelConfig
 from gatehouse.proxy.framing import DEFAULT_MAX_FRAME_BYTES
 
 
@@ -58,6 +59,22 @@ def _parser() -> argparse.ArgumentParser:
         default=120.0,
         help="seconds to wait for the user to approve a require_approval call through "
         "MCP elicitation (0 disables approval prompts: such calls are blocked)",
+    )
+    run.add_argument(
+        "--sentinel-endpoint",
+        default=None,
+        help="Logs Ingestion endpoint (DCE) to send events to Microsoft Sentinel; "
+        "default: $GATEHOUSE_SENTINEL_ENDPOINT. Needs gatehouse[sentinel].",
+    )
+    run.add_argument(
+        "--sentinel-dcr-id",
+        default=None,
+        help="immutable id of the data collection rule; default: $GATEHOUSE_SENTINEL_DCR_ID",
+    )
+    run.add_argument(
+        "--sentinel-stream",
+        default=None,
+        help="DCR stream name; default: $GATEHOUSE_SENTINEL_STREAM or Custom-GatehouseEvents_CL",
     )
 
     for name, helptext in (
@@ -115,6 +132,11 @@ def _cmd_run(args: argparse.Namespace, command: list[str]) -> int:
         return 2
     from gatehouse.proxy.app import RunOptions, run
 
+    try:
+        sentinel = _sentinel_config(args)
+    except ValueError as exc:
+        _err(f"gatehouse: {exc}")
+        return 2
     opts = RunOptions(
         server_name=args.name,
         policy_path=args.policy,
@@ -125,8 +147,26 @@ def _cmd_run(args: argparse.Namespace, command: list[str]) -> int:
         max_frame_bytes=args.max_frame_bytes,
         stderr_events=not args.quiet,
         approval_timeout=args.approval_timeout,
+        sentinel=sentinel,
     )
     return run(opts)
+
+
+def _sentinel_config(args: argparse.Namespace) -> SentinelConfig | None:
+    env = SentinelConfig.from_env()
+    endpoint = args.sentinel_endpoint or (env.endpoint if env else None)
+    rule_id = args.sentinel_dcr_id or (env.rule_id if env else None)
+    if not endpoint and not rule_id:
+        return None
+    if not endpoint or not rule_id:
+        # Asked for Sentinel but can't deliver: refuse to start rather than run silently
+        # without the SOC feed.
+        raise ValueError(
+            "Sentinel needs both an endpoint and a DCR id "
+            "(--sentinel-endpoint/--sentinel-dcr-id or the GATEHOUSE_SENTINEL_* variables)"
+        )
+    stream = args.sentinel_stream or (env.stream if env else None) or DEFAULT_STREAM
+    return SentinelConfig(endpoint, rule_id, stream)
 
 
 def _cmd_validate(path: Path) -> int:
