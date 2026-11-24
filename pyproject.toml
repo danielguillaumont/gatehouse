@@ -3,6 +3,8 @@ name = "gatehouse"
 version = "0.1.0"
 description = "Detection-engineering and SOC layer for AI agent tool use over MCP"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 # Deliberately small runtime surface: gatehouse proxies JSON-RPC frames itself and does
 # not import the MCP SDK at runtime (see docs/decisions.md).

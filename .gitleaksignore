@@ -1,0 +1,35 @@
+# Findings reviewed on 2026-11-24 (gitleaks v8.24.2, full history, 39 commits).
+# Every entry is a synthetic canary or a public documentation example:
+#   - attacks/scenarios/*: canaries containing 'CANARY' / 'EXMPL' (canary-check asserts they
+#     never reach gatehouse logs); the JWT canary decodes to {"sub":"CANARYJWT"}
+#   - tests/*: jwt.io's public example token, AWS's documented AKIAIOSFODNN7EXAMPLE and a
+#     one-character variant of it, and a made-up '9f8e7d6c5b4a3210'
+# Pinned by fingerprint (commit:file:rule:line), so a NEW secret anywhere still fails CI.
+
+0bf99c2aaaff3effeeae110670823becbd0deda7:docs/NEXT.md:aws-access-token:91
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:16
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:17
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:25
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:29
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:30
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/protocol.yaml:aws-access-token:8
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:119
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:15
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:16
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:9
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:96
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:98
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:aws-access-token:99
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:azure-ad-client-secret:65
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:jwt:76
+1a1999e75638abfece17fcb1bd5776dda09c5900:attacks/scenarios/secrets.yaml:private-key:43
+9c46bdeca4e353c6b5bfc2281cf0702fac21a898:attacks/scenarios/secrets.yaml:aws-access-token:119
+9c46bdeca4e353c6b5bfc2281cf0702fac21a898:attacks/scenarios/secrets.yaml:github-pat:24
+9c46bdeca4e353c6b5bfc2281cf0702fac21a898:attacks/scenarios/secrets.yaml:github-pat:26
+9c46bdeca4e353c6b5bfc2281cf0702fac21a898:tests/attacks/test_suite.py:jwt:91
+ca07b8fa617328bf68ec508a612aaf5730576e5d:tests/inspect/test_secrets.py:aws-access-token:92
+ca07b8fa617328bf68ec508a612aaf5730576e5d:tests/inspect/test_secrets.py:generic-api-key:29
+ca07b8fa617328bf68ec508a612aaf5730576e5d:tests/inspect/test_secrets.py:jwt:26
+d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:aws-access-token:245
+d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:slack-bot-token:230
+d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:slack-bot-token:236
