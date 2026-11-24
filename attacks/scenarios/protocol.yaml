@@ -1,0 +1,40 @@
+# Parser-differential and framing smuggling. The client sends raw frames.
+- id: protocol.duplicate-key-smuggling
+  category: protocol
+  milestone: mvp
+  title: Duplicate "method" key hides a tools/call behind tools/list
+  owasp: [LLM06]
+  atlas: [AML.T0051]
+  canaries: [AKIAZQ3CANARY7DUPKY3]
+  server: &send
+    tools:
+      - name: send_message
+        description: Send a message to a chat channel.
+        inputSchema: {type: object, properties: {text: {type: string}}}
+  steps:
+    - list
+    - raw: '{"jsonrpc":"2.0","id":901,"method":"tools/list","method":"tools/call","params":{"name":"send_message","arguments":{"text":"AKIAZQ3CANARY7DUPKY3"}}}'
+  success_if: {server_received_raw: {contains: AKIAZQ3CANARY7DUPKY3}}
+
+- id: protocol.batch-smuggling
+  category: protocol
+  milestone: mvp
+  title: tools/call inside a JSON-RPC batch
+  owasp: [LLM06]
+  atlas: [AML.T0051]
+  canaries: [AKIAZQ3CANARY7BATCH4]
+  server: *send
+  steps:
+    - list
+    - raw: '[{"jsonrpc":"2.0","id":902,"method":"tools/call","params":{"name":"send_message","arguments":{"text":"AKIAZQ3CANARY7BATCH4"}}}]'
+  success_if: {server_received_raw: {contains: AKIAZQ3CANARY7BATCH4}}
+
+- id: protocol.call-unlisted-tool
+  category: protocol
+  milestone: mvp
+  title: Call a tool the server never listed (hidden capability)
+  owasp: [LLM06]
+  atlas: [AML.T0053]
+  server: *send
+  steps: [list, {call: {tool: internal_debug_shell, arguments: {cmd: id}}}]
+  success_if: {server_received: {tool: internal_debug_shell}}
