@@ -67,6 +67,6 @@ ignore = ["S101"]
 "demo/**" = ["S603", "S607"]
 
 [tool.pyright]
-include = ["src", "tests", "attacks", "bench", "demo"]
+include = ["src", "tests", "attacks"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"
