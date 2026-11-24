@@ -72,3 +72,22 @@ jobs:
         with:
           name: attack-reports
           path: reports/
+
+  detections:
+    # Detection-as-code: every analytics rule runs in a real Kusto engine against the
+    # sample data and must return the rows in detections/expected.yaml.
+    runs-on: ubuntu-latest
+    services:
+      kusto:
+        image: mcr.microsoft.com/azuredataexplorer/kustainer-linux:latest
+        env:
+          ACCEPT_EULA: "Y"
+        ports:
+          - 8080:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run python -m detections.kusto --url http://localhost:8080 --wait 300

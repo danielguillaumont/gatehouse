@@ -64,9 +64,10 @@ ignore = ["S101"]
 "tests/**" = ["S101", "RUF001", "S603", "S607", "S105", "S106"]
 "attacks/**" = ["S101", "RUF001", "S603", "S607", "S105", "S106"]
 "bench/**" = ["S603", "S607"]
+"detections/**" = ["S603", "S607"]
 "demo/**" = ["S603", "S607"]
 
 [tool.pyright]
-include = ["src", "tests", "attacks", "bench"]
+include = ["src", "tests", "attacks", "bench", "detections"]
 pythonVersion = "3.11"
 typeCheckingMode = "strict"

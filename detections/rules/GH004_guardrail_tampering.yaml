@@ -1,0 +1,42 @@
+id: 5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7004
+name: gatehouse - Guardrail tampering or telemetry loss
+description: |
+  Something tried to weaken gatehouse itself or the SOC's visibility into it. Any of
+  these fires the rule:
+  - policy.tampered: the policy file changed on disk during a session.
+  - policy.load_failed: the policy failed to load, so gatehouse blocks every call.
+  - args.self_protect: an agent tool call referenced gatehouse's own policy, pins, key or
+    logs.
+  - gatehouse.fail_open: telemetry was lost (the one fail-open path in ADR-0001).
+  An agent editing its own guardrails maps to Impair Defenses.
+severity: High
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - DefenseEvasion
+relevantTechniques:
+  - T1562
+query: |
+  GatehouseEvents_CL
+  | where EventType in ("policy.tampered", "policy.load_failed", "gatehouse.fail_open")
+      or (EventType == "detection" and DetectorId == "args.self_protect")
+  | extend Signal = iff(EventType == "detection", DetectorId, EventType)
+  | project TimeGenerated, Host, AgentSessionId, ServerName, Signal, Severity, Action,
+            Reason, ToolName, Location, PolicySha256
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  Signal: Signal
+  ServerName: ServerName
+alertDetailsOverride:
+  alertDisplayNameFormat: "gatehouse guardrail signal: {{Signal}} on {{Host}}"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

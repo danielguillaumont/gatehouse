@@ -140,3 +140,16 @@ a keyword, so the prefilter can't hide a match. Argument scanning of 1 MiB dropp
 590 ms to 33 ms, and end-to-end overhead from about 940 ms to about 100 ms. Alternative
 considered: rewrite the patterns to start with literals. Rejected for now: more invasive,
 and the prefilter also skips rules entirely in the common no-secret case.
+
+**D-027 (2026-11-24) KQL rules are tested in the Kusto emulator (Kustainer).** The plan
+put this in M6. I moved it into the MVP because the emulator runs the same engine as Log
+Analytics, so the rules' syntax and semantics are checked, not just their YAML shape.
+`detections/kusto.py` creates `GatehouseEvents_CL` from the generated schema, ingests
+`sample_data/events.jsonl` with a JSON mapping, runs every rule, and compares the results
+with `expected.yaml`. Hunting queries must execute. CI runs the emulator as a service
+container. Caveats: the emulator is Azure Data Explorer, not Log Analytics, so
+Sentinel-only operators and functions (for example `_GetWatchlist` or ASIM parsers) can't
+be tested there, and the rules avoid them. The sample data comes from real gatehouse
+sessions, scrubbed of host names and paths. The one exception is a single synthetic
+`gatehouse.fail_open` row, marked `Details.Synthetic`. Alternative considered: a
+free-tier ADX cluster. Rejected because it needs an account and network access in CI.

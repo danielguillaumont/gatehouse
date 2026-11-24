@@ -1,0 +1,42 @@
+id: 5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7005
+name: gatehouse - Burst of blocked MCP tool calls in one agent session
+description: |
+  Ten or more tool calls from the same agent session were blocked within five minutes.
+  A single block is routine. A burst means the agent keeps retrying something the policy
+  forbids, usually because injected instructions are steering it or because it is
+  probing for hidden tools. AgentSessionId groups all gatehouse wrappers under one agent
+  process, so the count spans servers.
+severity: Medium
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Discovery
+  - Execution
+relevantTechniques:
+  - T1059
+query: |
+  let threshold = 10;
+  GatehouseEvents_CL
+  | where EventType == "tool.call" and Action in ("blocked", "denied", "approval_required")
+  | summarize BlockedCalls = count(), Servers = make_set(ServerName, 10),
+              Tools = make_set(ToolName, 20), Reasons = make_set(DecisionBasis, 10),
+              FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+              Host = take_any(Host)
+      by AgentSessionId, Window = bin(TimeGenerated, 5m)
+  | where BlockedCalls >= threshold
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  BlockedCalls: BlockedCalls
+alertDetailsOverride:
+  alertDisplayNameFormat: "{{BlockedCalls}} blocked MCP tool calls in one agent session"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

@@ -1,0 +1,45 @@
+id: 5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7002
+name: gatehouse - Unapproved MCP tool offered or invoked
+description: |
+  Either an MCP server offered a tool that was never approved (strict pinning, or a tool
+  added after the server was first trusted), or the agent tried to call a tool it was
+  never shown (unlisted, filtered or stale). Calls to hidden tools point to a hidden
+  capability or to a model steered by injected instructions. One row per session, server
+  and tool.
+severity: Medium
+requiredDataConnectors: []
+queryFrequency: 1h
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Execution
+  - Persistence
+relevantTechniques:
+  - T1195
+  - T1059
+query: |
+  GatehouseEvents_CL
+  | where (EventType == "detection" and DetectorId == "listing.unpinned")
+      or (EventType == "tool.call" and Action == "blocked"
+          and DecisionBasis in ("unlisted_tool", "stale_tool_list"))
+  | summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+              TimesOffered = countif(EventType == "detection"),
+              BlockedCalls = countif(EventType == "tool.call"),
+              Rules = make_set(RuleId, 5), Risk = take_any(ToolRisk)
+      by Host, AgentSessionId, ServerName, ToolName
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  ServerName: ServerName
+  ToolName: ToolName
+  BlockedCalls: BlockedCalls
+alertDetailsOverride:
+  alertDisplayNameFormat: "Unapproved MCP tool {{ServerName}}/{{ToolName}}"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

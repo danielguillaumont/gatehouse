@@ -1,0 +1,13 @@
+// Hunting: which MCP tools each agent session can see and actually uses.
+// Baseline for spotting new servers, risky tools nobody needs, and tools used outside
+// working hours. Run over 7-30 days.
+GatehouseEvents_CL
+| where EventType in ("pin.created", "tool.call")
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Calls = countif(EventType == "tool.call"),
+            BlockedCalls = countif(EventType == "tool.call" and Action == "blocked"),
+            Sessions = dcount(AgentSessionId), Hosts = dcount(Host),
+            Risk = take_any(ToolRisk)
+    by ServerName, UpstreamName, ToolName
+| extend NeverUsed = Calls == 0
+| order by Risk asc, Calls desc

@@ -1,0 +1,44 @@
+id: 5a0e6c3e-2f4b-4d1e-9b1a-0c1f8e9a7001
+name: gatehouse - MCP tool definition changed after approval (rug pull)
+description: |
+  A tool's definition (description, schema or annotations) no longer matches the pin
+  that was approved for it, and gatehouse removed the tool from the agent's view. A
+  changed description is the classic MCP "rug pull": a server that was trusted when it was
+  installed starts shipping instructions to the model later. Triage: run `gatehouse diff`
+  against the server and compare ChangedFields. Re-approve legitimate upgrades with
+  `gatehouse pin`.
+severity: High
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Persistence
+relevantTechniques:
+  - T1195
+query: |
+  GatehouseEvents_CL
+  | where EventType == "detection" and DetectorId == "listing.pin_mismatch"
+  | extend ChangedFields = tostring(Details.ChangedFields),
+           PinnedSha256 = tostring(Details.PinnedSha256),
+           CurrentSha256 = tostring(Details.CurrentSha256)
+  | summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+              Occurrences = count(), Sessions = dcount(AgentSessionId),
+              ChangedFields = make_set(ChangedFields, 10), PinnedSha256 = take_any(PinnedSha256)
+      by Host, ServerName, UpstreamName, ToolName, CurrentSha256
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  ServerName: ServerName
+  ToolName: ToolName
+alertDetailsOverride:
+  alertDisplayNameFormat: "MCP rug pull: {{ServerName}}/{{ToolName}} changed after approval"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

@@ -1,0 +1,10 @@
+// Hunting: the full gatehouse timeline of one agent session, across all its MCP servers.
+// Start here when triaging any gatehouse alert: set `session` to the alert's AgentSessionId.
+let session = "eval-rugpull.in-session";
+GatehouseEvents_CL
+| where AgentSessionId == session
+| where EventType !in ("protocol.negotiated", "policy.loaded")
+| project TimeGenerated, ServerName, EventType, Severity, Action, ToolName, ToolRisk,
+          DecisionBasis, Detector = strcat(DetectorId, "/", RuleId), MatchSummary, Reason,
+          LatencyMs
+| order by TimeGenerated asc

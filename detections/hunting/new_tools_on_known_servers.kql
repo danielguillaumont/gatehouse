@@ -1,0 +1,14 @@
+// Hunting: tools that were first pinned well after their server was first seen.
+// A late new tool on a long-trusted server is how a rug pull looks under TOFU when an
+// analyst approved it without reading it. Tune `grace` to your rollout pattern.
+let grace = 1d;
+let servers = GatehouseEvents_CL
+    | where EventType == "pin.created"
+    | summarize ServerFirstPinned = min(TimeGenerated) by Host, ServerName;
+GatehouseEvents_CL
+| where EventType == "pin.created"
+| summarize ToolFirstPinned = min(TimeGenerated), PinnedBy = take_any(tostring(Details.PinnedBy))
+    by Host, ServerName, ToolName, ToolRisk
+| join kind=inner servers on Host, ServerName
+| where ToolFirstPinned > ServerFirstPinned + grace
+| project Host, ServerName, ToolName, ToolRisk, PinnedBy, ServerFirstPinned, ToolFirstPinned

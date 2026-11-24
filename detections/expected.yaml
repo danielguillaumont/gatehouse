@@ -1,0 +1,28 @@
+# What each analytics rule must return on detections/sample_data/events.jsonl.
+# `rows` is the exact row count. Each `include` entry must match at least one row on
+# every listed column. Benign stories (eval-benign.*) must never appear in any result.
+GH001_rug_pull:
+  rows: 2
+  include:
+    - {ToolName: get_forecast, ServerName: srv}
+    - {ToolName: search_docs, ServerName: srv}
+GH002_unapproved_tool:
+  rows: 2
+  include:
+    - {ServerName: build-tools, ToolName: run_command, TimesOffered: 2, BlockedCalls: 1}
+    - {AgentSessionId: eval-blocked-burst, ToolName: internal_admin, BlockedCalls: 12}
+GH003_secret_to_egress_tool:
+  rows: 2
+  include:
+    - {RuleId: aws-access-key-id, ToolName: send_message, ToolRisk: egress}
+    - {RuleId: github-token, ToolName: send_message, ToolRisk: egress}
+GH004_guardrail_tampering:
+  rows: 3
+  include:
+    - {Signal: policy.tampered, AgentSessionId: eval-policy-tampered}
+    - {Signal: gatehouse.fail_open}
+    - {Signal: args.self_protect, ToolName: write_file}
+GH005_blocked_call_burst:
+  rows: 1
+  include:
+    - {AgentSessionId: eval-blocked-burst, BlockedCalls: 12}
