@@ -1,7 +1,7 @@
 # Where work stopped and what's next
 
 Last updated **2026-11-24**. Status: **MVP, M2, Sentinel integration and M3 evaluation
-complete.** `docs/interview-guide.md` is written. What's left is optional.
+complete.** `docs/interview-guide.md` is written. Prepared for public release (v0.1.0): README, demo GIF, LICENSE, SECURITY.md, gitleaks in CI. **The repo is still private.**
 
 ## State
 

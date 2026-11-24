@@ -229,3 +229,24 @@ needs a *new* held-out set to measure it. CI reports held-out results but doesn'
 them, for the same reason. Alternative considered: fix the obvious misses (hex decoding,
 `find -delete`, globs) now. Rejected for this release: the honest 33% is more useful in
 an evaluation than a tuned 70%, and each fix is listed with a reproducing scenario.
+
+**D-033 (2026-11-24) Competitors are scored on what they're designed to do, and every
+adjustment is disclosed.** Two adjustments: (1) gateward appends `<!-- gw:XXXXXXXX -->` to
+every text result as its canary tripwire (`src/gateward/canary.py`). The harness strips
+exactly that marker before comparing benign results and records how many it stripped.
+Counting it would have made every benign scenario a false positive. (2) mcp-watchdog only
+alerts, on stderr, so CRITICAL, HIGH and MEDIUM panels count as "alerted". LOW panels are
+excluded because one fires on every session. Both tools run with default configuration
+(neither has a policy file), in their own virtualenv, on the same runner and commit as
+gatehouse. Alternative: compare only "prevented". Rejected: it would score mcp-watchdog
+on a job it doesn't claim to do.
+
+**D-034 (2026-11-24) Public-release hygiene is enforced by CI, not by a one-off check.**
+gitleaks v8.24.2 scans the full history on every push in its own workflow, so docs-only
+commits (which `ci.yml` skips) are scanned too. The 27 reviewed findings, all synthetic
+canaries or vendor documentation examples, are ignored by fingerprint (commit, file, rule,
+line) in `.gitleaksignore`, so the same string in a new place still fails. The README
+demo GIF is rendered by VHS on Ubuntu from `demo/demo.tape` and committed by hand, so the
+workflow needs no write access. Alternatives: an allowlist regex for "CANARY" (rejected:
+it would also hide a real secret pasted next to that word); a bot commit of the GIF
+(rejected: needs `contents: write`).
