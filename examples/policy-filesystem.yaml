@@ -1,0 +1,21 @@
+# Allowlist for a filesystem MCP server.
+# Anything not listed, on this or any other server, falls through to default_action: block.
+version: 1
+default_action: block
+
+servers:
+  filesystem:
+    tools:
+      read_file: allow
+      read_multiple_files: allow
+      list_directory: allow
+      "search_*": allow                # quoted: a bare leading * is YAML alias syntax
+      write_file:
+        action: require_approval
+        reason: "File writes need a human"
+      "move_*": require_approval
+      delete_file:
+        # Redundant with the default today, but an explicit block also wins over any
+        # broader allow added later (e.g. someone adds "*_file": allow).
+        action: block
+        reason: "Deletes are never automated"

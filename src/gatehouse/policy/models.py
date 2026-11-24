@@ -1,0 +1,153 @@
+"""Pydantic models for the policy file (schema v1). See docs/policy.md."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Annotated, Any
+
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
+
+from gatehouse.policy.names import Specificity, normalize_name, specificity
+
+MAX_PATTERN_LEN = 200
+MAX_REASON_LEN = 500
+SUPPORTED_VERSIONS = frozenset({1})
+
+
+class Action(StrEnum):
+    ALLOW = "allow"
+    BLOCK = "block"
+    REQUIRE_APPROVAL = "require_approval"
+
+
+# StrictStr: YAML turns unquoted `on`, `yes`, `123` into bool/int. Those must be rejected,
+# not coerced, so a key always means exactly what was typed.
+Pattern = Annotated[StrictStr, Field(min_length=1, max_length=MAX_PATTERN_LEN)]
+
+
+class _Strict(BaseModel):
+    # extra="forbid": a typo such as `acton:` must fail loudly, never become "no rule".
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ToolRule(_Strict):
+    action: Action
+    reason: Annotated[StrictStr, Field(min_length=1, max_length=MAX_REASON_LEN)] | None = None
+
+
+def _expand_shorthand(value: Any) -> Any:
+    """Accept `tool: allow` as shorthand for `tool: {action: allow}`."""
+    if isinstance(value, str):
+        return {"action": value}
+    return value
+
+
+RuleSpec = Annotated[ToolRule, BeforeValidator(_expand_shorthand)]
+
+
+class ServerBlock(_Strict):
+    tools: dict[Pattern, RuleSpec]
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledRule:
+    """A (server pattern, tool pattern) rule, normalized and ranked for evaluation."""
+
+    server_pattern: str  # as written in the file (for explanations and events)
+    tool_pattern: str
+    server_norm: str
+    tool_norm: str
+    server_spec: Specificity
+    tool_spec: Specificity
+    action: Action
+    reason: str | None
+
+    def dominates(self, other: CompiledRule) -> bool:
+        """True if self is at least as specific in both dimensions and strictly in one."""
+        return (
+            self.server_spec >= other.server_spec
+            and self.tool_spec >= other.tool_spec
+            and (self.server_spec > other.server_spec or self.tool_spec > other.tool_spec)
+        )
+
+    @property
+    def label(self) -> str:
+        return f"servers[{self.server_pattern!r}].tools[{self.tool_pattern!r}]"
+
+
+def _check_pattern(pattern: str, where: str) -> str:
+    if pattern != pattern.strip():
+        raise ValueError(f"{where} pattern {pattern!r} has leading/trailing whitespace")
+    normalized = normalize_name(pattern)
+    if not normalized:
+        raise ValueError(f"{where} pattern {pattern!r} is empty after normalization")
+    return normalized
+
+
+class Policy(_Strict):
+    version: StrictInt
+    default_action: Action
+    servers: dict[Pattern, ServerBlock] = Field(default_factory=dict)
+
+    _rules: tuple[CompiledRule, ...] = PrivateAttr(default=())
+
+    @field_validator("version")
+    @classmethod
+    def _supported_version(cls, v: int) -> int:
+        if v not in SUPPORTED_VERSIONS:
+            raise ValueError(
+                f"unsupported policy version {v}; supported: {sorted(SUPPORTED_VERSIONS)}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _compile(self) -> Policy:
+        rules: list[CompiledRule] = []
+        seen_servers: dict[str, str] = {}
+        for server_pattern, block in self.servers.items():
+            server_norm = _check_pattern(server_pattern, "server")
+            if server_norm in seen_servers:
+                raise ValueError(
+                    f"server patterns {seen_servers[server_norm]!r} and {server_pattern!r} "
+                    "are identical after normalization"
+                )
+            seen_servers[server_norm] = server_pattern
+
+            seen_tools: dict[str, str] = {}
+            for tool_pattern, rule in block.tools.items():
+                tool_norm = _check_pattern(tool_pattern, f"server {server_pattern!r} tool")
+                if tool_norm in seen_tools:
+                    raise ValueError(
+                        f"tool patterns {seen_tools[tool_norm]!r} and {tool_pattern!r} under "
+                        f"server {server_pattern!r} are identical after normalization"
+                    )
+                seen_tools[tool_norm] = tool_pattern
+                rules.append(
+                    CompiledRule(
+                        server_pattern=server_pattern,
+                        tool_pattern=tool_pattern,
+                        server_norm=server_norm,
+                        tool_norm=tool_norm,
+                        server_spec=specificity(server_norm),
+                        tool_spec=specificity(tool_norm),
+                        action=rule.action,
+                        reason=rule.reason,
+                    )
+                )
+        self._rules = tuple(rules)
+        return self
+
+    @property
+    def rules(self) -> tuple[CompiledRule, ...]:
+        return self._rules

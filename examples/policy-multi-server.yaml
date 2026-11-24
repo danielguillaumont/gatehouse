@@ -1,0 +1,26 @@
+# Allowlist across several MCP servers, with global guardrails.
+version: 1
+default_action: block
+
+servers:
+  "*":                                 # every server
+    tools:
+      "delete_*":
+        action: block                  # explicit block: wins over every allow below
+        reason: "Destructive operations are never automated"
+      "*_exec*": require_approval
+
+  github:
+    tools:
+      "get_*": allow
+      "list_*": allow
+      "search_*": allow
+      create_issue: allow
+      merge_pull_request:
+        action: require_approval
+        reason: "Merges need a human"
+
+  "prod-*":                            # e.g. prod-db, prod-k8s
+    tools:
+      "*": require_approval
+      "describe_*": allow
