@@ -218,7 +218,8 @@ Held-out, per scenario (P prevented, A alerted only, - missed):
   every benign scenario would have counted as a false positive.
 - **gateward's remaining 6 false positives are real blocks:**
   - `destructive_shell` on `rm -rf build/ dist/` and on clearing an app cache
-  - `path_traversal` on reading `src/auth.py` and `docs/configuration/.env.sample`
+  - `path_traversal` on reading `~/projects/app/.env.example` and
+    `docs/configuration/.env.sample`
   - `tool_description_scan` on a security scanner's tool list
   - `injection_phrase` on a security article that quotes payloads
 - **gateward's alerts** go to a SQLite audit database. The harness doesn't read it, so
