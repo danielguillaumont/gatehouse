@@ -131,6 +131,7 @@ def make_harness(
     *,
     server_name: str = "srv",
     approver: Approver | None = None,
+    approval_timeout: float | None = None,
 ) -> RouterHarness:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(textwrap.dedent(policy_yaml), encoding="utf-8")
@@ -152,6 +153,7 @@ def make_harness(
         fingerprinter=fp,
         policy_watcher=PolicyWatcher(policy_path, load.sha256),
         approver=approver,
+        approval_timeout=approval_timeout,
     )
     harness: RouterHarness
 

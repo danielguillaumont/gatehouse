@@ -52,7 +52,13 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--quiet", action="store_true", help="no human-readable events on stderr")
     run.add_argument("--expect-policy-sha256", default=None)
     run.add_argument("--max-frame-bytes", type=int, default=DEFAULT_MAX_FRAME_BYTES)
-    run.add_argument("--approval-timeout", type=float, default=120.0)
+    run.add_argument(
+        "--approval-timeout",
+        type=float,
+        default=120.0,
+        help="seconds to wait for the user to approve a require_approval call through "
+        "MCP elicitation (0 disables approval prompts: such calls are blocked)",
+    )
 
     for name, helptext in (
         ("pin", "approve (pin) the current tool definitions of a server"),

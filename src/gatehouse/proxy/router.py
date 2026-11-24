@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from anyio.abc import TaskGroup
+
 from gatehouse.events.emitter import Emitter
 from gatehouse.events.fingerprint import Fingerprinter
 from gatehouse.events.schema import Direction, EventAction, EventType, Severity
@@ -53,6 +55,7 @@ from gatehouse.protocol import (
     UNSUPPORTED_PROTOCOL_VERSION,
     UPSTREAM_UNAVAILABLE,
 )
+from gatehouse.proxy.approval import ApprovalRequest, Elicitor
 from gatehouse.proxy.framing import BatchFrame, Frame, FrameError, FrameKind, encode, parse_frame
 from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.session import Pending, Session, ToolInfo
@@ -73,15 +76,7 @@ def strictest(actions: Iterable[Action]) -> Action:
     return max(actions, key=lambda a: _ACTION_ORDER[a], default=Action.ALLOW)
 
 
-Approver = Callable[["ApprovalRequest"], Awaitable[bool]]
-
-
-@dataclass(frozen=True)
-class ApprovalRequest:
-    server: str
-    tool: str
-    reason: str
-    arg_keys: tuple[str, ...]
+Approver = Callable[[ApprovalRequest], Awaitable[bool]]
 
 
 @dataclass
@@ -92,7 +87,10 @@ class RouterConfig:
     scan: ScanConfig = field(default_factory=ScanConfig)
     fingerprinter: Fingerprinter | None = None
     policy_watcher: PolicyWatcher | None = None
-    approver: Approver | None = None  # M2: elicitation-based approval
+    # Approval of require_approval calls. With ``approval_timeout`` set and no explicit
+    # ``approver``, the router asks the user through MCP elicitation (proxy/approval.py).
+    approver: Approver | None = None
+    approval_timeout: float | None = None
 
 
 @dataclass
@@ -117,6 +115,15 @@ class Router:
         self.to_client = send_to_client
         self.to_server = send_to_server
         self.session = Session()
+        self.elicitor: Elicitor | None = None
+        self.approver: Approver | None = config.approver
+        if self.approver is None and config.approval_timeout is not None:
+            self.elicitor = Elicitor(send_to_client, config.approval_timeout)
+            self.approver = self.elicitor
+        # Set by the transport (run_stdio). Calls waiting for approval run here so the
+        # client reader loop stays free to deliver the user's answer. Without a task group
+        # (unit tests with a direct approver) the call is awaited inline.
+        self.task_group: TaskGroup | None = None
 
     # ------------------------------------------------------------------ helpers
 
@@ -242,6 +249,8 @@ class Router:
         await self.to_server(frame.raw + b"\n")
 
     async def _client_response(self, frame: Frame) -> None:
+        if self.elicitor is not None and self.elicitor.resolve(frame):
+            return  # the user's answer to a gatehouse approval request: never forwarded
         key = frame.id_key
         pending = self.session.server_pending.pop(key, None) if key is not None else None
         if pending is None:
@@ -363,7 +372,6 @@ class Router:
         risk = info.risk if info else classify(name)
         verdict = self._verdict(name, args)
         args_bytes = len(json.dumps(args, ensure_ascii=False).encode("utf-8"))
-        fp = self.cfg.fingerprinter
         common: dict[str, Any] = {
             "direction": _C2S,
             "method": TOOLS_CALL,
@@ -372,11 +380,49 @@ class Router:
             "tool_risk": risk,
         }
 
+        call = (frame, name, args, risk, verdict, common, args_bytes)
+        if (
+            verdict.action is Action.REQUIRE_APPROVAL
+            and self._can_ask_for_approval()
+            and self.task_group is not None
+        ):
+            self.task_group.start_soon(self._finish_call, *call)
+        else:
+            await self._finish_call(*call)
+
+    def _can_ask_for_approval(self) -> bool:
+        return self.approver is not None and self.session.client_supports_elicitation()
+
+    async def _finish_call(
+        self,
+        frame: Frame,
+        name: str,
+        args: dict[str, Any],
+        risk: str,
+        verdict: _CallVerdict,
+        common: dict[str, Any],
+        args_bytes: int,
+    ) -> None:
+        assert frame.id_key is not None
+        fp = self.cfg.fingerprinter
         action = verdict.action
         approved: bool | None = None
+        revoked = False
         if action is Action.REQUIRE_APPROVAL:
             approved = await self._request_approval(name, args, verdict, common)
             action = Action.ALLOW if approved else Action.BLOCK
+            if approved:
+                # The server may have changed its tools while the user was deciding (a
+                # rug pull timed to the approval prompt). Approval covers the tool the
+                # user was shown, so re-check before forwarding.
+                avail, avail_reason, avail_basis = self._availability(name)
+                if avail is not Action.ALLOW:
+                    action = Action.BLOCK
+                    revoked = True
+                    verdict.reasons.append(
+                        f"{avail_reason or 'tool not available'} (after approval)"
+                    )
+                    verdict.basis = avail_basis or "unlisted_tool"
 
         outcome = {
             Action.ALLOW: EventAction.APPROVED if approved else EventAction.ALLOWED,
@@ -388,6 +434,8 @@ class Router:
             and verdict.action is Action.REQUIRE_APPROVAL
         ):
             outcome = EventAction.APPROVAL_REQUIRED
+        if revoked:
+            outcome = EventAction.BLOCKED
 
         for f in verdict.findings:
             fa = self._finding_action(f)
@@ -424,7 +472,7 @@ class Router:
         self, tool: str, args: dict[str, Any], verdict: _CallVerdict, common: dict[str, Any]
     ) -> bool | None:
         """None: approval impossible (no approver / client can't elicit) -> blocked."""
-        approver = self.cfg.approver
+        approver = self.approver
         if approver is None or not self.session.client_supports_elicitation():
             return None
         reason = "; ".join(verdict.reasons) or "policy requires approval"

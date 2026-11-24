@@ -184,3 +184,21 @@ deterministic rules are the explainable baseline it would be measured against, a
 `docs/known-bypasses.md` lists what they miss. Also considered: Aho-Corasick over all
 keywords (`pyahocorasick`). Rejected for now: a C dependency for a gain the benchmark
 doesn't need yet.
+
+**D-030 (2026-11-24) Approval runs through MCP elicitation, off the client reader loop.**
+gatehouse acts as the server toward the client and sends `elicitation/create` under a
+random `gatehouse-approval-<uuid>` id. The server can't predict that id, so it can't
+answer for the user, and it can't collide with the server's own request ids. The answer
+arrives on the client reader loop, which would deadlock if the call waiting for it ran
+inline. So the router hands a call that needs approval to the stdio task group, and the
+loop keeps reading. Fail-closed: anything except `accept` with `approve: true` denies,
+including a timeout (`--approval-timeout`, default 120 s). After approval, gatehouse
+re-checks the tool list: a server that changes tools during the prompt (a rug pull timed
+to the approval) gets the call blocked. The prompt lists argument names, never values.
+Alternatives considered:
+- A terminal prompt on gatehouse's own TTY. Rejected: under an MCP client, gatehouse has
+  no interactive terminal (stdin and stdout are the protocol).
+- An out-of-band approval service (web page or chat). Deferred: it needs a network
+  listener and auth, which is out of scope for a stdio proxy.
+- Blocking with a "re-run after approving" message, like `gatehouse pin`. That stays the
+  behaviour for clients without elicitation.

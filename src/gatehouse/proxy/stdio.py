@@ -143,6 +143,7 @@ async def run_stdio(
         )
 
     async with anyio.create_task_group() as tg:
+        router.task_group = tg  # approvals run here, off the client reader loop
 
         async def client_loop() -> None:
             reader = LineReader(read_stdin, max_frame_bytes)

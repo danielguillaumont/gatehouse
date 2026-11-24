@@ -121,6 +121,7 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         scan=ScanConfig(protected_paths=protected_variants(protected), fingerprint=fingerprinter),
         fingerprinter=fingerprinter,
         policy_watcher=PolicyWatcher(opts.policy_path, load.sha256),
+        approval_timeout=opts.approval_timeout if opts.approval_timeout > 0 else None,
     )
     return config, emitter
 

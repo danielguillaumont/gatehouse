@@ -134,10 +134,36 @@ findings:                  # optional; these are the defaults
 ```
 
 `block` stops the call (or hides the tool, or withholds the result). `require_approval`
-asks the user through MCP elicitation when the client supports it, and blocks otherwise.
+asks the user through MCP elicitation when the client supports it, and blocks otherwise
+(see [Approval](#approval-through-elicitation)).
 `log` lets the traffic through and records the detection. When several findings apply,
 the strictest action wins. A finding can only make the policy decision stricter: a
 `log` finding never turns a policy `block` into an allow.
+
+## Approval through elicitation
+
+When a call resolves to `require_approval` (a policy rule, an incomparable tie, or a
+finding mapped to it) and the client declared the `elicitation` capability in
+`initialize`, gatehouse sends the client an `elicitation/create` request of its own: a
+message naming the server, the tool, why approval is needed and the argument *names*
+(never their values), and a one-field form, `approve` (boolean, default false).
+
+- **Only an explicit yes approves:** `action: accept` with `approve: true`. Decline,
+  cancel, an unchecked box, a JSON-RPC error, a malformed answer or no answer within
+  `--approval-timeout` seconds (default 120) all deny the call.
+- **The model never sees the request.** It goes to the client UI, and the answer is
+  consumed by gatehouse and never forwarded to the server.
+- **Approval is re-checked against the tool list.** If the server changes its tools while
+  the user is deciding, the approved call is blocked (`(after approval)` in the reason).
+- **Other traffic keeps flowing** while a call waits for the user.
+- **Clients without elicitation** get the call blocked with outcome `approval_required`
+  and the reason in the error text. `--approval-timeout 0` turns prompts off everywhere.
+- Events: `approval.requested`, then `approval.granted` or `approval.denied`, then the
+  `tool.call` event with action `approved`, `denied` or `blocked`.
+
+Known gap: a malicious server can send its *own* `elicitation/create` with text that
+imitates gatehouse's prompt. gatehouse forwards server requests unchanged
+(`docs/known-bypasses.md`).
 
 ## Load errors → fail closed
 

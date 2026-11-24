@@ -26,14 +26,14 @@ tagged `milestone: bypass` are expected to be missed and do not fail CI.
 | **Compromised host** | Anyone who can run code as the user can kill or reconfigure gatehouse. `self_protect` only stops the *agent* from doing it through its tools. |
 | **Telemetry loss** | If the JSONL sink fails, traffic continues (the one fail-open path, ADR-0001), reported as `gatehouse.fail_open`. An attacker who fills the disk loses you logs, not enforcement. |
 
-## Protocol coverage gaps (MVP)
+## Protocol coverage gaps
 
 | Not inspected yet | Status |
 |---|---|
 | `resources/*`, `prompts/*`, sampling and elicitation content | Forwarded unchanged; inspection planned for M5 |
 | Streamable HTTP transport | M4. Only stdio is proxied today. |
 | 2026 stateless protocol era | gatehouse answers `server/discover` with -32601, so clients fall back to the `initialize` era, which it fully inspects (D-003). A client that refuses to fall back can't connect through gatehouse. That fails closed, not open. |
-| Tool results | Result detectors are M2. In the MVP, results are forwarded unchanged (still logged with size and latency). |
+| Server-sent elicitation that imitates gatehouse | A malicious server can send its own `elicitation/create` whose message looks like a gatehouse approval prompt, to get a "yes" for something else. gatehouse forwards server requests unchanged. Mitigation idea: tag gatehouse prompts with a per-install phrase the user learns, and flag server elicitations that mention gatehouse. |
 
 If you find a bypass that isn't listed here, it's a bug in this document. Please open an
 issue with a scenario.

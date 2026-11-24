@@ -122,3 +122,26 @@ def test_upstream_crash_is_reported(tmp_path: Path) -> None:
         pass
     assert c.proc.returncode == 3
     assert any(e["EventType"] == "upstream.exited" for e in _events(tmp_path))
+
+
+@pytest.mark.parametrize("approve", [True, False])
+def test_elicitation_approval_end_to_end(tmp_path: Path, approve: bool) -> None:
+    """The user's answer arrives on the same stdin loop that is waiting for it."""
+    policy = "version: 1\ndefault_action: require_approval\npinning: tofu\n"
+    seen: list[dict[str, Any]] = []
+
+    def user(frame: dict[str, Any]) -> dict[str, Any] | None:
+        if frame["method"] != "elicitation/create":
+            return None
+        seen.append(frame)
+        return {"action": "accept", "content": {"approve": approve}}
+
+    with StdioClient(_gatehouse(tmp_path, policy), timeout=30, on_server_request=user) as c:
+        c.initialize(capabilities={"elicitation": {}})
+        c.list_tools()
+        reply = c.call_tool("get_forecast", {"city": "Paris"})
+    assert len(seen) == 1 and "get_forecast" in seen[0]["params"]["message"]
+    assert reply["result"]["isError"] is (not approve)
+    assert ("Sunny in Paris" in json.dumps(reply)) is approve
+    kinds = [e["EventType"] for e in _events(tmp_path) if e["EventType"].startswith("approval.")]
+    assert kinds == ["approval.requested", "approval.granted" if approve else "approval.denied"]
