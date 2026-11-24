@@ -63,7 +63,10 @@ jobs:
         run: cat reports/gatehouse/report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Canary check (no secret reaches events or stderr)
         run: uv run python -m attacks canary-check reports/gatehouse
-      # BENCHMARK-STEP
+      - name: Latency benchmark (informational, shared runners are noisy)
+        run: |
+          uv run python -m bench.latency --iterations 100 --out reports/bench
+          cat reports/bench/latency.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

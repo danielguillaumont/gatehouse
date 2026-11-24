@@ -130,3 +130,13 @@ mock server sent. Alerts on benign traffic are reported separately as the alert 
 because a logged-only finding costs analyst time but does not break the agent. The
 `direct` target must show every attack succeeding, otherwise the scenario is broken and
 `python -m attacks run` exits 1.
+
+**D-026 (2026-11-24) Keyword prefilter for secret rules.** The first latency benchmark
+showed about 940 ms of overhead for a 1 MiB call. Every secret regex ran over the whole
+payload, and rules that start with a lookbehind cannot use `re`'s literal-prefix search.
+Each rule now has lower-case `keywords`, and its regex runs only if one of them occurs in
+the lower-cased text (the gitleaks approach). A test asserts every regex match contains
+a keyword, so the prefilter can't hide a match. Argument scanning of 1 MiB dropped from
+590 ms to 33 ms, and end-to-end overhead from about 940 ms to about 100 ms. Alternative
+considered: rewrite the patterns to start with literals. Rejected for now: more invasive,
+and the prefilter also skips rules entirely in the common no-secret case.
