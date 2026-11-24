@@ -57,10 +57,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     write_report(out, report)
     if args.summary:
         _err(render_markdown(report))
+    # The held-out set (milestone m3) is a measurement, not a regression gate: gating on it
+    # would push rules to be tuned against it, which is exactly what it exists to avoid
+    # (D-032). A broken held-out scenario still fails.
     failures = [
         r
         for r in results
-        if r.outcome in ("broken", "false_positive")
+        if r.outcome == "broken"
+        or (r.outcome == "false_positive" and r.milestone != "m3")
         or (target.name == "gatehouse" and r.milestone == "mvp" and r.outcome == "missed")
     ]
     if target.name == "direct":
