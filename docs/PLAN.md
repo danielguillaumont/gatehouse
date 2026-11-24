@@ -108,26 +108,30 @@ gatehouse/
 │  ├─ PLAN.md  architecture.md  threat-model.md  event-schema.md  policy.md
 │  ├─ evaluation.md  known-bypasses.md  prior-art.md
 │  └─ adr/0001-fail-closed.md ...
-├─ examples/policy.yaml
+├─ examples/policy-*.yaml
 └─ .github/workflows/ci.yml       # ubuntu + windows × py3.11–3.13; suite; report → job summary
 ```
 
 ### Example policy
 
+Schema v1 and precedence are specified in [`docs/policy.md`](policy.md) (explicit block
+always wins; otherwise most specific match; incomparable disagreement → require_approval).
+
 ```yaml
 version: 1
-defaults:
-  action: allow
-  on_internal_error: block       # fail-closed
-  findings: { critical: block, high: block, medium: log, low: log }
+default_action: block            # allowlist style; required
 servers:
   filesystem:
-    pinning: strict              # strict | tofu | off
     tools:
-      read_file:  { action: allow, args: { path: { deny_glob: ["~/.ssh/**", "**/.env"] } } }
-      write_file: { action: require_approval }   # MVP: treated as block + event
-      "*":        { action: block }
+      read_file: allow
+      "search_*": allow
+      write_file:
+        action: require_approval  # MVP: treated as block + event
+        reason: "File writes need a human"
 ```
+
+Later milestones add fields such as `pinning`, finding-severity mappings and argument
+constraints. Unknown keys are rejected, so older gatehouse versions refuse newer policies.
 
 ### Example event
 
@@ -179,7 +183,7 @@ an exfil sink (→ §8).
 | Situation | Default | Notes |
 |---|---|---|
 | Detector or policy engine raises | **Block** the message, emit `gatehouse.internal_error` | Per-server `on_internal_error: allow` is opt-in and emits `gatehouse.fail_open` (high severity) on every use. |
-| Policy file missing / invalid at startup | **Refuse to start** | Non-zero exit, error on stderr. No implicit allow-all. |
+| Policy file missing / invalid at startup | **Block every call**, emit `policy.load_failed` (critical) | The proxy still runs so the failure is visible to the agent and in telemetry. No implicit allow-all. See `docs/policy.md`. |
 | Pin store unreadable / corrupt | Strict mode: **block all tools**; TOFU mode: refuse to start | |
 | Approval required but unavailable or timed out | **Block** | MVP: always block. |
 | Message exceeds size limit | **Block**, emit `limits.exceeded` | |
@@ -253,8 +257,10 @@ Fail-open decisions are always visible in telemetry; a KQL rule alerts on `gateh
 
 **Ownership**
 
-- **You write**: policy engine (`policy/engine.py`, decision precedence), pinning
-  (`inspect/pinning.py`, canonical hashing, diff), KQL analytics rules.
+- **You write**: pinning (`inspect/pinning.py`, canonical hashing, diff), KQL analytics
+  rules.
+- **Claude writes, then teaches** (you approve the design, review, and must be able to
+  explain it): policy engine (`policy/`). Done ahead of schedule; see `docs/policy.md`.
 - **Paired**: router/session (`proxy/router.py`, `proxy/session.py`).
 - **Generated, you review**: scaffold, CI, Pydantic models (after you design the schemas),
   CLI, sinks, secret catalog + redactor, mock servers, harness, report, benchmark, fixture
@@ -265,7 +271,7 @@ Fail-open decisions are always visible in telemetry; a KQL rule alerts on `gateh
 | 1 | uv scaffold, CI matrix, exact SDK pin + spec version recorded, event/policy schemas, ADR-0001, `prior-art.md` draft | you design schemas; I generate | CI green on Windows + Linux |
 | 2 | Passthrough proxy with id correlation and stdout discipline | **paired** | Claude Code works unchanged through gatehouse on Windows |
 | 3 | Pinning: canonical hash, pin store, `gatehouse pin` / `diff`, strict + TOFU, list filtering, `list_changed` | **you** | Mutating a pinned tool removes it and emits `listing.pin_mismatch` |
-| 4 | Policy engine + `validate-policy`, policy integrity (§9), fail-closed paths (§6), `self_protect` | **you** (engine), generated (integrity plumbing) | Table-driven decision tests pass; tamper test emits `policy.tampered` |
+| 4 | Wire the policy engine into the router, `validate-policy`, policy integrity (§9), fail-closed paths (§6), `self_protect` | generated (engine already done) | Decisions applied end-to-end; tamper test emits `policy.tampered` |
 | 5 | `args.secrets`, redactor (§8), HMAC fingerprints, JSONL sink, canary test | generated, you review | No canary ever appears in any output |
 | 6 | Attack + benign mock servers, target-agnostic harness, evaluation report, `known-bypasses.md` stub, latency benchmark | generated, you review | CI job summary shows precision/recall/FP rate and latency table |
 | 7 | `GatehouseEvents_CL` schema, 4–5 KQL rules, fixture, ADX validation; **demo**; README | **you** (KQL); generated (demo scaffolding) | Rules return expected rows on the fixture; demo recorded |

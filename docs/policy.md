@@ -1,0 +1,102 @@
+# Policy file (schema v1)
+
+A policy decides, for every `tools/call`, whether gatehouse should **allow**, **block**, or
+**require_approval** for it. Examples: [`examples/policy-filesystem.yaml`](../examples/policy-filesystem.yaml),
+[`examples/policy-multi-server.yaml`](../examples/policy-multi-server.yaml).
+
+## Schema
+
+```yaml
+version: 1                        # required; only 1 is accepted
+default_action: block             # required; allow | block | require_approval
+
+servers:                          # optional
+  "<server pattern>":
+    tools:                        # required
+      "<tool pattern>": allow                     # shorthand
+      "<tool pattern>":                           # object form
+        action: require_approval                  # required
+        reason: "Writes need a human"             # optional, 1-500 chars, shown in events
+```
+
+- Patterns are globs (`*`, `?`, `[abc]`, `[!abc]`), matched with `fnmatchcase` against
+  normalized names (see below). They are not regexes and not paths: `.` and `/` are literal.
+- **Quote patterns that start with `*`.** A bare `*` is YAML alias syntax and is rejected.
+- `default_action` is required. There is no implicit default, so "allow" can never be an
+  accident. The recommended style is an allowlist with `default_action: block`.
+
+## Precedence
+
+For a call to tool `T` on server `S`:
+
+1. **Fail closed.** No valid policy → **block** (see "Load errors" below).
+2. **Explicit block wins.** If *any* matching rule says `block`, the result is **block**,
+   regardless of how specific other rules are (IAM-style explicit deny).
+3. **Most specific match.** Otherwise, each pattern is ranked
+   `exact (3) > glob with literals, e.g. delete_* (2) > * (1)`. Rule X *dominates* rule Y
+   if X is at least as specific on both server and tool, and strictly more specific on
+   one. The rules that no other matching rule dominates win. If they all agree, that action
+   is the result.
+4. **Incomparable tie → require_approval.** If those winning rules disagree (for example,
+   `github/*: allow` vs `*/merge_*: require_approval`, where each is more specific in a
+   different dimension), the result is **require_approval**.
+5. **No match** → `default_action`.
+
+Rule order in the file never matters. Decisions record their `basis`
+(`fail_closed | explicit_block | most_specific | tie | default`) for telemetry.
+
+Consequences worth knowing:
+
+- `"*": block` under a server blocks **every** tool on it, including any you also allow.
+  Express allowlists with `default_action: block` plus allow rules instead.
+- You cannot carve an exception out of a block. To allow `delete_draft` but block other
+  deletes, write the block rules more narrowly.
+- A server-specific allow beats a global `require_approval` on the same tool pattern rank
+  (`github/list_*: allow` beats `*/*_exec*: require_approval` for `github.list_exec_jobs`).
+  Only `block` is global by force.
+
+## Name normalization
+
+Both names and patterns are normalized before matching:
+drop Unicode format characters (zero-width, bidi controls, soft hyphen, tag characters)
+→ NFKC → casefold → NFKC. So `Delete_Repo`, `ＤＥＬＥＴＥ_repo` (fullwidth), `𝐝𝐞𝐥𝐞𝐭𝐞_repo`
+(mathematical bold) and `dele​te_repo` all match `delete_*`. Two patterns that are
+identical after normalization (e.g. `Delete_*` and `delete_*`) are rejected as duplicates.
+
+## Tool names are attacker-controlled
+
+Server and tool names come from the MCP server, which is exactly the party a policy is meant
+to constrain. A malicious or compromised server can call its exfiltration tool
+`get_weather` instead of `upload_file`, so a name-based rule only constrains servers that
+name their tools honestly. Normalization defeats cheap evasions of a rule you already have
+(case changes, fullwidth letters, invisible characters). It does not make names
+trustworthy, and it does not catch cross-script confusables such as Cyrillic `е` (U+0435)
+standing in for Latin `e`. That gap is documented by an `xfail` test.
+
+Treat policy as **one layer**:
+
+- **Pinning** (MVP) binds each approved tool name to a hash of its full definition
+  (description and input schema). A renamed, newly added or silently changed tool is not
+  pinned, so it is filtered out or blocked before the policy is even consulted.
+- **M2 content detectors** inspect what a tool *does* and *says* (poisoned descriptions,
+  dangerous arguments, injected responses) regardless of its name. A planned
+  confusable/mixed-script detector will flag names like `dеlete_repo`.
+- Prefer allowlists (`default_action: block`). Against a dishonest server, a denylist of
+  dangerous names is the weakest form of policy.
+
+## Load errors → fail closed
+
+Any problem loading the policy makes gatehouse **block every call** and emit one
+`policy.load_failed` event (severity `critical`, with `ErrorKind`, `Message`, `PolicyPath`,
+and `PolicySha256` when the file was readable):
+
+| ErrorKind | Examples |
+|---|---|
+| `io` | missing file, permission denied, path is a directory |
+| `too_large` | over 1 MiB |
+| `encoding` | not UTF-8 (a UTF-8 BOM is accepted) |
+| `yaml` | syntax error, unquoted leading `*`, nesting too deep |
+| `duplicate_key` | the same key twice in one mapping (PyYAML would otherwise keep the last) |
+| `alias` | YAML anchors, aliases or `<<` merge keys |
+| `schema` | unknown keys (typos), wrong types, unsupported `version`, unknown action, non-string keys such as unquoted `on`, empty/whitespace patterns, patterns colliding after normalization |
+| `internal` | a gatehouse bug; still fails closed |
