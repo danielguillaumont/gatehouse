@@ -52,6 +52,12 @@ def cmd_run(args: argparse.Namespace) -> int:
             encoding="utf-8",
         )
         (evidence / "stderr.txt").write_text("".join(obs.stderr), encoding="utf-8")
+        # What the client saw, to explain an outcome. Not a gatehouse log, so canary-check
+        # skips it (an attack that succeeds is *supposed* to show its payload here).
+        client_view = {"lists": obs.lists, "calls": obs.calls, "errors": obs.errors}
+        (evidence / CLIENT_VIEW).write_text(
+            json.dumps(client_view, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
         _err(f"{res.outcome:15} {sc.id}  {', '.join(res.detections)}")
     report = build_report(target.name, results)
     write_report(out, report)
@@ -76,11 +82,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+CLIENT_VIEW = "client.json"
+
+
 def cmd_canary_check(args: argparse.Namespace) -> int:
     root: Path = args.dir
     canaries = {sc.id: sc.canaries for sc in load_scenarios() if sc.canaries}
     leaks: list[str] = []
     for path in sorted((root / "evidence").glob("*/*")):
+        if path.name == CLIENT_VIEW:
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for sid, values in canaries.items():
             for value in values:

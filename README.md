@@ -25,31 +25,38 @@ MCP client  <-- stdio -->  gatehouse  <-- stdio -->  MCP server
 
 ## Status
 
-MVP done; M2 (content detectors, Sentinel ingestion) in progress. See `docs/PLAN.md` and
-`docs/NEXT.md`.
+MVP, M2 and the Sentinel integration are done; M3 (evaluation and write-up) is in
+progress. See `docs/PLAN.md` and `docs/NEXT.md`.
 
 | Area | Status |
 |---|---|
 | stdio proxy, strict framing, policy engine, pinning (strict / TOFU), secret detection, self-protection | ✅ MVP |
 | Events + redaction + HMAC fingerprints, `gatehouse.fail_open` | ✅ MVP |
 | Attack suite + report + canary check in CI, latency benchmark | ✅ MVP |
-| 5 Sentinel rules + 4 hunting queries, validated in the Kusto emulator in CI | ✅ MVP |
-| Content detectors (poisoning, injection, commands, paths, PII), Sentinel sink, Bicep | 🚧 M2 |
+| Content detectors: tool poisoning and shadowing, injection and exfil beacons in results, dangerous commands, credential paths, PII, invisible Unicode, look-alike names | ✅ M2 |
+| Approval of `require_approval` calls through MCP elicitation | ✅ M2 |
+| Sentinel: Logs Ingestion sink, Bicep (table, DCE, DCR, rules), 6 rules incl. cross-server GH006, validated in the Kusto emulator | ✅ built, **not deployed** ([setup](docs/sentinel-setup.md)) |
+| Held-out evaluation, competitor comparison | 🚧 M3 |
 
 ## Results (reproducible)
 
 From `uv run python -m attacks run --target gatehouse --out reports/gatehouse`. Details,
 methodology and the full table are in [`docs/evaluation.md`](docs/evaluation.md).
 
-| Milestone | Attacks | Prevented | Recall | Benign false positives |
+| Scenario set | Attacks | Prevented | Recall | Benign false positives |
 |---|---|---|---|---|
-| MVP scope (rug pull, protocol, secrets, self-protection) | 19 | 19 | 100% | 0 / 10 |
-| M2 scope (detectors not built yet) | 35 | 0 | 0% | |
+| MVP scope (rug pull, protocol, secrets, self-protection) | 19 | 19 | 100% | |
+| M2 scope (content detectors) | 35 | 34 (+1 logged) | 97% | |
+| **Held-out: written after the detectors, not tuned on** | **18** | **6** | **33%** | **2 / 6** |
 | Documented bypasses | 3 | 0 | 0% | |
+| All benign scenarios | | | | 2 / 16 |
 
-The 100% is over scenarios I wrote myself for detectors I wrote myself, so it shows the
-controls work; it is not a claim about unseen attacks. `docs/known-bypasses.md` lists what
-gets through.
+The MVP and M2 sets were written alongside the detectors, so they show the controls do
+what they're designed to do. **The held-out 33% is the number to quote for unseen
+attacks.** Rules that match structure (credential paths, token formats, reverse-shell
+shapes) generalize; rules that match phrasing don't. That's why gatehouse's controls are
+pinning, policy and approval, with content detection as SOC telemetry.
+`docs/known-bypasses.md` lists every miss with a scenario that reproduces it.
 
 ## Quick start
 

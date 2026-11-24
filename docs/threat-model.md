@@ -34,18 +34,22 @@ Trust boundaries:
 | 6 | Agent tampers with gatehouse (policy, pins, key, logs) | `tools/call`, disk | `args.self_protect`, `policy.tampered` | MVP | LLM06 | AML.T0081 · T1562.001 |
 | 7 | Parser-differential smuggling (duplicate keys, batches) | any frame | strict framing (`protocol.*`) | MVP | LLM06 | AML.T0053 |
 | 8 | Resource exhaustion (huge frames, deep nesting) | any frame | frame size limit, bounded walk | MVP | LLM10 | AML.T0029 |
-| 9 | Tool poisoning in description or schema | `tools/list` | `listing.poisoning` | M2 | LLM01, LLM03 | AML.T0110, AML.T0051.001 |
-| 10 | Tool shadowing (instructions about *other* tools) | `tools/list` | `listing.cross_tool_ref` | M2 | LLM01, LLM06 | AML.T0110 |
-| 11 | Invisible Unicode smuggling | any text | `normalize.invisible` | M2 | LLM01 | AML.T0068 · T1027 |
-| 12 | Indirect prompt injection in results | `tools/call` result | `response.injection` | M2 | LLM01 | AML.T0051.001 |
-| 13 | Markdown/URL exfiltration beacon | `tools/call` result | `response.exfil_url` | M2 | LLM05, LLM02 | AML.T0086 |
-| 14 | Dangerous commands | `tools/call` | `args.commands` | M2 | LLM06 | AML.T0053, AML.T0050 · T1059 |
-| 15 | Credential-store / sensitive path access | `tools/call` | `args.paths` | M2 | LLM02, LLM06 | AML.T0098 · T1552.004 |
-| 16 | PII in arguments | `tools/call` | `args.pii` | M2 | LLM02 | AML.T0086 |
+| 9 | Tool poisoning in description or schema | `tools/list` | `listing.poisoning` | M2 ✅ | LLM01, LLM03 | AML.T0110, AML.T0051.001 |
+| 10 | Tool shadowing (instructions about *other* tools) | `tools/list` | `listing.cross_tool_ref` | M2 ✅ | LLM01, LLM06 | AML.T0110 |
+| 11 | Invisible Unicode smuggling | any text | `text.invisible` (tags HIGH, bidi MEDIUM, zero-width LOW); all phrase rules also scan the stripped text | M2 ✅ | LLM01 | AML.T0068 · T1027 |
+| 12 | Indirect prompt injection in results | `tools/call` result | `response.injection` | M2 ✅ | LLM01 | AML.T0051.001 |
+| 13 | Markdown/URL exfiltration beacon | `tools/call` result | `response.exfil_url` | M2 ✅ | LLM05, LLM02 | AML.T0086 |
+| 14 | Dangerous commands | `tools/call` | `args.commands` | M2 ✅ | LLM06 | AML.T0053, AML.T0050 · T1059 |
+| 15 | Credential-store / sensitive path access | `tools/call` | `args.paths` | M2 ✅ | LLM02, LLM06 | AML.T0098 · T1552.004 |
+| 16 | PII in arguments | `tools/call` | `args.pii` | M2 ✅ | LLM02 | AML.T0086 |
+| 18 | Mixed-script look-alike tool names | `tools/list` | `listing.confusable_name` | M2 ✅ | LLM03 | AML.T0010.005 |
+| 19 | Injection on one server, exfiltration through another | events from several wrappers | Sentinel rule GH006 (joins on `AgentSessionId`) | M2 ✅ | LLM01, LLM02 | AML.T0051.001, AML.T0086 |
 | 17 | Malicious sampling / elicitation phishing | server→client requests | `server_request.*` | M5 | LLM01 | AML.T0051 |
 
-The attack suite (`attacks/scenarios/*.yaml`) has scenarios for rows 1–16. Results are in
-`docs/evaluation.md`.
+The attack suite (`attacks/scenarios/*.yaml`) has scenarios for rows 1–16 and 18, and the
+held-out set adds variants written after the detectors. Row 19 is covered by a sample-data
+story validated in the Kusto emulator. Results, including the held-out recall of 33%, are
+in `docs/evaluation.md`.
 
 ## Non-goals
 
