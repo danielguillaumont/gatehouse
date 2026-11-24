@@ -80,8 +80,33 @@ def test_broken_sink_does_not_raise() -> None:
     sink = MemorySink()
     emitter = Emitter(EventContext(agent_session_id="a", server_name="s"), [Broken(), sink])
     emitter.emit(EventType.SESSION_STARTED)
-    assert emitter.sink_errors == 1
-    assert len(sink.records) == 1
+    # the broken sink fails twice: the event itself and the fail_open report
+    assert emitter.sink_errors == 2
+    assert [r["EventType"] for r in sink.records] == ["session.started", "gatehouse.fail_open"]
+    fail_open = sink.records[1]
+    assert fail_open["Action"] == "fail_open" and fail_open["Severity"] == "high"
+    # reported once per broken sink, not on every event
+    emitter.emit(EventType.SESSION_ENDED)
+    assert [r["EventType"] for r in sink.records][-1] == "session.ended"
+    assert len(sink.records) == 3
+
+
+def test_unwritable_event_dir_reports_fail_open(tmp_path: Path) -> None:
+    from gatehouse.proxy.app import RunOptions, build_emitter
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    mem = MemorySink()
+    opts = RunOptions(
+        server_name="s",
+        policy_path=tmp_path / "p.yaml",
+        command=["x"],
+        events_dir=blocker / "events",
+        stderr_events=False,
+        extra_sinks=[mem],
+    )
+    build_emitter(opts, EventContext(agent_session_id="a", server_name="s"))
+    assert [r["EventType"] for r in mem.records] == ["gatehouse.fail_open"]
 
 
 def test_jsonl_sink(tmp_path: Path) -> None:

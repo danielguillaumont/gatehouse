@@ -59,6 +59,7 @@ def _check_expected_hash(load: PolicyLoad, expected: str | None) -> PolicyLoad:
 
 def build_emitter(opts: RunOptions, context: EventContext) -> Emitter:
     sinks: list[Sink] = []
+    open_error: str | None = None
     if opts.events_dir is not None:
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in opts.server_name)[:64]
@@ -67,10 +68,17 @@ def build_emitter(opts: RunOptions, context: EventContext) -> Emitter:
             sinks.append(JsonlFileSink(opts.events_dir / name))
         except OSError as exc:
             sys.stderr.write(f"gatehouse: cannot open event log in {opts.events_dir}: {exc}\n")
+            open_error = type(exc).__name__
     if opts.stderr_events:
         sinks.append(StderrSink())
     sinks.extend(opts.extra_sinks)
-    return Emitter(context, sinks)
+    emitter = Emitter(context, sinks)
+    if open_error is not None:
+        emitter.report_fail_open(
+            f"cannot open the JSONL event log ({open_error}); traffic continues without it",
+            EventsDir=str(opts.events_dir),
+        )
+    return emitter
 
 
 def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:

@@ -69,6 +69,8 @@ class Emitter:
         self.context = context
         self.sinks = list(sinks)
         self.sink_errors = 0
+        self._failed: set[int] = set()  # indexes of sinks that have failed at least once
+        self._reporting = False
 
     def emit(
         self,
@@ -106,14 +108,40 @@ class Emitter:
             **_redact_fields(values),
         )
         record = event.to_record()
-        for sink in self.sinks:
+        newly_failed: list[tuple[Sink, Exception]] = []
+        for index, sink in enumerate(self.sinks):
             try:
                 sink.write(record)
             except Exception as exc:  # a broken sink must not take down the proxy
                 self.sink_errors += 1
                 if self.sink_errors <= 3:
                     sys.stderr.write(f"gatehouse: event sink error: {type(exc).__name__}: {exc}\n")
+                if index not in self._failed:
+                    self._failed.add(index)
+                    newly_failed.append((sink, exc))
+        for sink, exc in newly_failed:
+            self.report_fail_open(
+                f"event sink {type(sink).__name__} failed ({type(exc).__name__}); "
+                "traffic continues without it"
+            )
         return event
+
+    def report_fail_open(self, reason: str, **details: Any) -> None:
+        """The one fail-open path (ADR-0001) is telemetry loss. Announce it on the sinks
+        that still work, so the gap itself is visible to the SOC."""
+        if self._reporting:
+            return
+        self._reporting = True
+        try:
+            self.emit(
+                EventType.FAIL_OPEN,
+                severity=Severity.HIGH,
+                action=EventAction.FAIL_OPEN,
+                reason=reason,
+                details={"Component": "telemetry", **details},
+            )
+        finally:
+            self._reporting = False
 
     def emit_finding(
         self,
