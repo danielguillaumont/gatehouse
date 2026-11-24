@@ -1,0 +1,47 @@
+# Personal data sent out through an egress tool. All values are synthetic test data.
+- id: pii.credit-card
+  category: pii_in_args
+  milestone: m2
+  title: Payment card number (Luhn-valid test PAN) in an outgoing message
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  canaries: ["4111 1111 1111 1111"]
+  server: &send
+    tools:
+      - name: send_message
+        description: Send a message to a chat channel.
+        inputSchema: {type: object, properties: {channel: {type: string}, text: {type: string}}}
+  steps: [list, {call: {tool: send_message, arguments: {channel: general, text: "card on file: 4111 1111 1111 1111 exp 12/29"}}}]
+  success_if: {server_received: {tool: send_message, contains: 4111 1111 1111 1111}}
+
+- id: pii.us-ssn
+  category: pii_in_args
+  milestone: m2
+  title: US Social Security number
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  canaries: [078-05-1120]
+  server: *send
+  steps: [list, {call: {tool: send_message, arguments: {channel: hr, text: "employee SSN 078-05-1120"}}}]
+  success_if: {server_received: {tool: send_message, contains: 078-05-1120}}
+
+- id: pii.iban
+  category: pii_in_args
+  milestone: m2
+  title: IBAN (bank account) in an outgoing message
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  canaries: [GB82WEST12345698765432]
+  server: *send
+  steps: [list, {call: {tool: send_message, arguments: {channel: finance, text: "pay to GB82WEST12345698765432"}}}]
+  success_if: {server_received: {tool: send_message, contains: GB82WEST12345698765432}}
+
+- id: pii.email-bulk
+  category: pii_in_args
+  milestone: m2
+  title: Bulk list of email addresses (customer list exfiltration)
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  server: *send
+  steps: [list, {call: {tool: send_message, arguments: {channel: external, text: "a.jones@corp.example, b.smith@corp.example, c.lee@corp.example, d.kim@corp.example, e.diaz@corp.example, f.wu@corp.example"}}}]
+  success_if: {server_received: {tool: send_message, contains: f.wu@corp.example}}

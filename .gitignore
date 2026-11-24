@@ -11,3 +11,4 @@ htmlcov/
 # local runtime output
 *.jsonl.local
 gatehouse.lock.local
+reports/

@@ -1,0 +1,8 @@
+# Policy used by the attack suite for the `gatehouse` target.
+#
+# It is deliberately permissive (default allow, trust-on-first-use pinning) so the suite
+# measures the *detectors*, not a deny-by-default policy that would trivially block every
+# call. Production policies should use `default_action: block` (see docs/policy.md).
+version: 1
+default_action: allow
+pinning: tofu

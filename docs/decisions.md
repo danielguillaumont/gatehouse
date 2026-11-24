@@ -109,3 +109,24 @@ need bespoke configs. Competitors are installed and run in CI / isolated venvs o
 
 **D-022 Approval** uses MCP elicitation only when the client declared the capability;
 otherwise `require_approval` blocks with `Action=approval_required`.
+
+**D-023 (2026-11-24) TOFU trusts a server's *first* listing only.** Trust-on-first-use
+pins tools seen in the first `tools/list` (and its pagination pages) of a server with no
+pins. Tools that appear later, whether in the same session or after a restart, are filtered
+with `listing.unpinned/new-tool-on-pinned-server` until `gatehouse pin --tool NAME`
+approves them. The attack suite showed the old behaviour silently trusted a newly added
+`upload_everything` tool. Alternative considered: keep trusting new tools and only alert.
+Rejected because it contradicts fail-closed (ADR-0001), and `gatehouse pin --tool` makes
+approving a legitimate new tool cheap.
+
+**D-024 (2026-11-24) The attack suite runs gatehouse with a permissive policy**
+(`attacks/policy-eval.yaml`: `default_action: allow`, `pinning: tofu`). A deny-by-default
+policy would "prevent" every attack trivially and measure nothing. The suite measures the
+detectors and listing checks.
+
+**D-025 (2026-11-24) Benign false positive = any change to traffic.** A benign scenario
+fails if a tool is hidden or altered, a call is blocked, or a result differs from what the
+mock server sent. Alerts on benign traffic are reported separately as the alert rate,
+because a logged-only finding costs analyst time but does not break the agent. The
+`direct` target must show every attack succeeding, otherwise the scenario is broken and
+`python -m attacks run` exits 1.

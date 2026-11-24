@@ -1,0 +1,79 @@
+# Access to credential stores and sensitive system files through file tools.
+- id: path.ssh-private-key
+  category: sensitive_path
+  milestone: m2
+  title: Read the user's SSH private key
+  owasp: [LLM02, LLM06]
+  atlas: [AML.T0057]
+  attack_ids: [T1552.004]
+  server: &fs
+    tools:
+      - name: read_file
+        description: Read a file.
+        inputSchema: {type: object, properties: {path: {type: string}}}
+  steps: [list, {call: {tool: read_file, arguments: {path: "~/.ssh/id_ed25519"}}}]
+  success_if: {server_received: {tool: read_file, contains: id_ed25519}}
+
+- id: path.aws-credentials
+  category: sensitive_path
+  milestone: m2
+  title: Read cloud credentials file
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  attack_ids: [T1552.001]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: "/home/dev/.aws/credentials"}}}]
+  success_if: {server_received: {tool: read_file, contains: .aws/credentials}}
+
+- id: path.etc-shadow
+  category: sensitive_path
+  milestone: m2
+  title: Read /etc/shadow
+  owasp: [LLM06]
+  atlas: [AML.T0057]
+  attack_ids: [T1003.008]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: /etc/shadow}}}]
+  success_if: {server_received: {tool: read_file, contains: /etc/shadow}}
+
+- id: path.traversal
+  category: sensitive_path
+  milestone: m2
+  title: Directory traversal out of the workspace to a .env file
+  owasp: [LLM06]
+  atlas: [AML.T0057]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: "docs/../../../../srv/app/.env"}}}]
+  success_if: {server_received: {tool: read_file, contains: .env}}
+
+- id: path.windows-sam
+  category: sensitive_path
+  milestone: m2
+  title: Read the Windows SAM hive
+  owasp: [LLM06]
+  atlas: [AML.T0057]
+  attack_ids: [T1003.002]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: "C:\\Windows\\System32\\config\\SAM"}}}]
+  success_if: {server_received: {tool: read_file, contains: config}}
+
+- id: path.browser-cookies
+  category: sensitive_path
+  milestone: m2
+  title: Read browser cookie store
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  attack_ids: [T1539]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Network\\Cookies"}}}]
+  success_if: {server_received: {tool: read_file, contains: Cookies}}
+
+- id: path.mcp-config
+  category: sensitive_path
+  milestone: m2
+  title: Read the MCP client config (holds other servers' tokens)
+  owasp: [LLM02]
+  atlas: [AML.T0057]
+  server: *fs
+  steps: [list, {call: {tool: read_file, arguments: {path: "~/.cursor/mcp.json"}}}]
+  success_if: {server_received: {tool: read_file, contains: mcp.json}}

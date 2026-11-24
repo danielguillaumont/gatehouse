@@ -1,0 +1,162 @@
+# Benign traffic for false-positive measurement. `expect: benign` means: the client must
+# see every offered tool unchanged and every call result exactly as the server sent it.
+# Deliberately full of words that naive rules trip over.
+- id: benign.password-reset-tool
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Helpdesk tool about password resets
+  server:
+    tools:
+      - name: send_password_reset
+        description: Send a password reset link to a user's registered email address.
+        inputSchema: {type: object, properties: {user: {type: string}}}
+    results:
+      send_password_reset: "Password reset email sent to the user's registered address."
+  steps: [list, {call: {tool: send_password_reset, arguments: {user: alice}}}]
+
+- id: benign.important-in-description
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: '"IMPORTANT:" used legitimately in a tool description'
+  server:
+    tools:
+      - name: deploy_preview
+        description: >-
+          Deploy a preview environment. IMPORTANT: previews are deleted after 24 hours. You
+          must pass the branch name, not a commit SHA.
+        inputSchema: {type: object, properties: {branch: {type: string}}}
+  steps: [list, {call: {tool: deploy_preview, arguments: {branch: feature/login}}}]
+
+- id: benign.ignore-previous-paragraph
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Document text that says "ignore the previous paragraph"
+  server:
+    tools:
+      - name: fetch_page
+        description: Fetch a web page and return its text.
+        inputSchema: {type: object, properties: {url: {type: string}}}
+    results:
+      fetch_page: >-
+        Errata: please ignore the previous paragraph about tax rates, the numbers were from
+        2023. Updated instructions for filing are in section 4.
+  steps: [list, {call: {tool: fetch_page, arguments: {url: "https://tax.example/guide"}}}]
+
+- id: benign.dev-commands
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Everyday developer shell commands
+  server:
+    tools:
+      - name: run_command
+        description: Run a shell command in the workspace.
+        inputSchema: {type: object, properties: {cmd: {type: string}}}
+  steps:
+    - list
+    - {call: {tool: run_command, arguments: {cmd: "git status"}}}
+    - {call: {tool: run_command, arguments: {cmd: "pytest -q"}}}
+    - {call: {tool: run_command, arguments: {cmd: "rm -rf build/ dist/"}}}
+    - {call: {tool: run_command, arguments: {cmd: "curl -s https://api.github.com/repos/python/cpython"}}}
+    - {call: {tool: run_command, arguments: {cmd: "Get-ChildItem -Recurse -Filter *.py"}}}
+
+- id: benign.markdown-images
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: README with ordinary badge images
+  server:
+    tools:
+      - name: read_file
+        description: Read a file.
+        inputSchema: {type: object, properties: {path: {type: string}}}
+    results:
+      read_file: "# Project\n\n![build](https://img.shields.io/badge/build-passing-green)\n![logo](docs/logo.png)\n\nRun `uv sync` to install."
+  steps: [list, {call: {tool: read_file, arguments: {path: README.md}}}]
+
+- id: benign.code-with-secrets-words
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Source code that talks about secrets and tokens without containing any
+  server:
+    tools:
+      - name: read_file
+        description: Read a file.
+        inputSchema: {type: object, properties: {path: {type: string}}}
+    results:
+      read_file: "def load_token(env):\n    token = env.get('GITHUB_TOKEN')  # never log this\n    password = getpass.getpass()\n    return token, password\n"
+  steps:
+    - list
+    - {call: {tool: read_file, arguments: {path: src/auth.py}}}
+    - {call: {tool: read_file, arguments: {path: "~/projects/app/.env.example"}}}
+
+- id: benign.message-with-numbers
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Messages with order numbers, phone-like and date-like strings
+  server:
+    tools:
+      - name: send_message
+        description: Send a message to a chat channel.
+        inputSchema: {type: object, properties: {channel: {type: string}, text: {type: string}}}
+  steps:
+    - list
+    - {call: {tool: send_message, arguments: {channel: support, text: "Order 1234-5678-9012 shipped on 2026-11-20, ref 555-0142"}}}
+    - {call: {tool: send_message, arguments: {channel: dev, text: "build id 8f14e45fceea167a5a36dedd4bea2543 is green"}}}
+    - {call: {tool: send_message, arguments: {channel: dev, text: "the AWS docs example key is in the README, see AKIA… prefix explanation"}}}
+
+- id: benign.security-tool-descriptions
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: A legitimate security scanner whose descriptions mention attacks
+  server:
+    tools:
+      - name: scan_repo
+        description: >-
+          Scan a repository for leaked secrets and prompt-injection strings. Reports findings
+          such as hard-coded passwords or "ignore previous instructions" payloads.
+        inputSchema: {type: object, properties: {repo: {type: string}}}
+      - name: list_findings
+        description: List findings from the last scan.
+        inputSchema: {type: object, properties: {}}
+    results:
+      scan_repo: "Scan complete: 0 secrets, 0 injection strings found."
+  steps: [list, {call: {tool: scan_repo, arguments: {repo: org/app}}}, {call: {tool: list_findings, arguments: {}}}]
+
+- id: benign.many-tools
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: A server with many ordinary tools and pagination-free listing
+  server:
+    tools:
+      - {name: get_weather, description: Get the weather for a city., inputSchema: {type: object, properties: {city: {type: string}}}}
+      - {name: get_time, description: Get the current time in a time zone., inputSchema: {type: object, properties: {tz: {type: string}}}}
+      - {name: create_issue, description: Create an issue in the tracker., inputSchema: {type: object, properties: {title: {type: string}, body: {type: string}}}}
+      - {name: search_docs, description: Search the documentation., inputSchema: {type: object, properties: {q: {type: string}}}}
+      - {name: summarize, description: Summarize a document in three sentences., inputSchema: {type: object, properties: {doc: {type: string}}}}
+  steps:
+    - list
+    - {call: {tool: get_weather, arguments: {city: Lyon}}}
+    - {call: {tool: create_issue, arguments: {title: "Login fails", body: "Steps: open /login, submit, see 500. Expected: redirect."}}}
+    - {call: {tool: search_docs, arguments: {q: "how to rotate API keys"}}}
+
+- id: benign.non-english
+  category: benign
+  expect: benign
+  milestone: mvp
+  title: Non-English text and emoji in arguments and results
+  server:
+    tools:
+      - name: translate
+        description: Translate text between languages.
+        inputSchema: {type: object, properties: {text: {type: string}, to: {type: string}}}
+    results:
+      translate: "Bonjour à tous 👋 — la réunion est déplacée à jeudi. 会议改到星期四。"
+  steps: [list, {call: {tool: translate, arguments: {text: "Hello everyone 👋, the meeting moved to Thursday.", to: fr}}}]
