@@ -5,24 +5,18 @@ that emits redacted, SIEM-ready security events, enforces a YAML policy and tool
 and ships Microsoft Sentinel KQL analytics plus a measured attack suite.
 Full plan, decisions and milestones: `docs/PLAN.md`.
 
-## Ownership — read before writing code
+## Working agreement
 
-This is a learning/portfolio project. The owner writes some modules by hand.
-
-- **Owner writes (do NOT implement; explain, review, suggest tests, answer questions only):**
-  - `src/gatehouse/inspect/pinning.py` (canonical hashing, pin compare, diff)
-  - `detections/rules/*.yaml` and `detections/hunting/*.kql` (KQL rules)
-- **Paired (propose small steps, let the owner drive; no large drops):**
-  - `src/gatehouse/proxy/router.py`, `src/gatehouse/proxy/session.py`
-- **Claude writes, then teaches (owner approves the design first, reviews the code, and
-  must be able to explain it):**
-  - `src/gatehouse/policy/` (models, loader, engine: decision logic and precedence).
-    The policy schema needs the owner's approval before implementation.
-- **Generate freely (owner reviews):** scaffold, CI, Pydantic models (after the owner
-  designs the schema), CLI, sinks, redactor, secret catalog, mock servers, harness,
-  report, benchmark, demo, docs.
-
-Keep commits small and incremental. Never bulk-generate into an owner-written module.
+- Claude writes all code, tests, KQL, infrastructure and docs, and works through
+  `docs/PLAN.md` milestone by milestone without waiting for approval.
+- Every non-obvious decision is recorded in `docs/decisions.md` (date, decision, why,
+  alternatives).
+- Small, logical commits with clear messages; push after each milestone once tests, ruff
+  and pyright pass. No AI/Claude attribution in commits or PRs.
+- Azure/Sentinel resources are built (Bicep, KQL, sample data, `docs/sentinel-setup.md`)
+  but never deployed.
+- Stop and ask only for something irreversible, anything needing a password or payment,
+  or anything that would make the repo public.
 
 ## Stack & commands
 
