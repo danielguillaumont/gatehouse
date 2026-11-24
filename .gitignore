@@ -12,3 +12,4 @@ htmlcov/
 *.jsonl.local
 gatehouse.lock.local
 reports/
+demo/.poisoned

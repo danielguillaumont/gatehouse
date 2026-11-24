@@ -14,7 +14,7 @@ from gatehouse.protocol import SUPPORTED_VERSIONS
 
 pytestmark = pytest.mark.integration
 
-SERVER = Path(__file__).resolve().parents[1] / "servers" / "weather_server.py"
+SERVER = Path(__file__).resolve().parents[2] / "demo" / "weather_server.py"
 
 
 def _gatehouse(tmp_path: Path, policy: str, *extra: str) -> list[str]:

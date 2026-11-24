@@ -1,0 +1,10 @@
+# Demo policy: deny by default, allow the weather server's tools, strict pinning.
+# Strict pinning means a tool is only visible after `gatehouse pin` approved it, and is
+# hidden again as soon as its definition changes.
+version: 1
+default_action: block
+pinning: strict
+servers:
+  weather:
+    tools:
+      "*": allow

@@ -21,12 +21,12 @@ relevantTechniques:
 query: |
   GatehouseEvents_CL
   | where EventType == "detection" and DetectorId == "listing.pin_mismatch"
-  | extend ChangedFields = tostring(Details.ChangedFields),
-           PinnedSha256 = tostring(Details.PinnedSha256),
+  | extend PinnedSha256 = tostring(Details.PinnedSha256),
            CurrentSha256 = tostring(Details.CurrentSha256)
+  | mv-expand ChangedField = Details.ChangedFields to typeof(string)
   | summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
-              Occurrences = count(), Sessions = dcount(AgentSessionId),
-              ChangedFields = make_set(ChangedFields, 10), PinnedSha256 = take_any(PinnedSha256)
+              Occurrences = dcount(EventId), Sessions = dcount(AgentSessionId),
+              ChangedFields = make_set(ChangedField, 10), PinnedSha256 = take_any(PinnedSha256)
       by Host, ServerName, UpstreamName, ToolName, CurrentSha256
 entityMappings:
   - entityType: Host

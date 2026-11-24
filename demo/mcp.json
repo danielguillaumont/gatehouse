@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "weather": {
+      "command": "uv",
+      "args": [
+        "run",
+        "gatehouse",
+        "run",
+        "--name",
+        "weather",
+        "--policy",
+        "demo/policy.yaml",
+        "--",
+        "uv",
+        "run",
+        "python",
+        "demo/weather_server.py"
+      ]
+    }
+  }
+}

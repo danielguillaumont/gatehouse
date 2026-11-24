@@ -10,7 +10,7 @@ from gatehouse.cli import main
 
 pytestmark = pytest.mark.integration
 
-SERVER = Path(__file__).resolve().parents[1] / "servers" / "weather_server.py"
+SERVER = Path(__file__).resolve().parents[2] / "demo" / "weather_server.py"
 EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
