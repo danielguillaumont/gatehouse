@@ -1,7 +1,7 @@
 # Where work stopped and what's next
 
-Last updated **2026-11-24**. Status: **MVP, M2 (detectors, approval) and the Sentinel
-integration complete**; next is M3 (evaluation and write-up).
+Last updated **2026-11-24**. Status: **MVP, M2, Sentinel integration and M3 evaluation
+complete.** Remaining: the interview guide, then optional improvements.
 
 ## State
 
@@ -36,18 +36,26 @@ integration complete**; next is M3 (evaluation and write-up).
   DCE, DCR, role, onboarding and rules (generated from the tested YAML),
   `docs/sentinel-setup.md`, and cross-server rule GH006. 6/6 rules pass in Kusto.
   **Not deployed**: run the commands in `docs/sentinel-setup.md` in your subscription.
+- **Held-out set** (D-032): 18 attacks + 6 benign written after the detectors, not tuned
+  on, not gated. gatehouse 6/18 prevented, 2/6 benign false positives.
+- **Competitor comparison** (run `45507937200`, same runner and commit): held-out
+  gatehouse 6/18, gateward 0.3.0 7/18, mcp-watchdog 0.1.9 1/18 + 9 alerted; benign FP 2,
+  6, 0 of 16. Scoring adjustments (gateward's canary marker, watchdog's stderr alerts) are
+  in `docs/evaluation.md`.
 - **Pin store:** fixed lost updates under lock contention on Windows (a delete-pending
   lock file raises PermissionError, not FileExistsError).
 
 ## Next steps, in order
 
-1. **M3:**
-   - held-out paraphrase scenarios, written after the detectors
-   - competitor runs (gateward, mcp-watchdog) in CI or an isolated venv only
-   - finalize `docs/prior-art.md` and `docs/evaluation.md`
-   - `docs/interview-guide.md`
-2. **Docs touch-ups for M2:** README feature list and `docs/threat-model.md` coverage
-   column should name the new detectors.
+1. `docs/interview-guide.md`.
+2. Optional improvements, each needing a **new** held-out set to measure (D-032):
+   - hex decoding for secrets; base64 decoding for results
+   - per-rule severity overrides in the policy (fixes the two held-out false positives
+     without a global `high: log`)
+   - more destructive verbs (`find -delete`, `dd`, `mkfs`), credential-directory globs
+   - scan numbers for PII; reference-style markdown images
+   - read gateward's SQLite audit log so its alerts can be scored
+3. Deploy the Sentinel resources yourself (`docs/sentinel-setup.md`); nothing was deployed.
 
 ## Caveats
 
