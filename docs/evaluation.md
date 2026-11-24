@@ -6,7 +6,8 @@ push and posts the report in the job summary.
 
 ## Method
 
-- **Scenarios:** `attacks/scenarios/*.yaml` holds 67 scenarios: 57 attacks and 10 benign.
+- **Scenarios:** `attacks/scenarios/*.yaml` holds 91 scenarios: 75 attacks and 16 benign
+  (the held-out set adds 18 and 6).
   Each attack has a machine-checkable `success_if` (did the client see the poisoned tool,
   did the server receive the canary, ...). Each has a category, OWASP LLM 2025 and ATLAS
   2026.10 ids, and a `milestone`: the milestone whose detector should stop it, or
@@ -82,6 +83,45 @@ detectors (M3) and `docs/known-bypasses.md` are the honest counterweight.
 
 Earlier result (MVP, commit `f628387`): mvp 19/19 prevented, m2 0/35 (detectors not
 built), the same benign result.
+
+## Results: held-out set (M3)
+
+`attacks/scenarios/heldout.yaml` holds 18 attacks and 6 benign scenarios. I wrote them on
+2026-11-24, after the M2 detectors, phrased the way an attacker or a real tool would
+phrase things, and **did not change any rule afterwards** (D-032). They are reported, not
+gated: CI doesn't fail on them, because a gate would push rules to be tuned against them.
+
+Command: `uv run python -m attacks run --target gatehouse --out reports/gatehouse`, at
+commit `d4de1b5`, Python 3.12.2, Windows 11, run on 2026-11-24. The `direct` baseline:
+18/18 held-out attacks succeed and all 6 benign scenarios pass.
+
+| Category | Attacks | Prevented | Missed | Caught | Missed scenarios |
+|---|---|---|---|---|---|
+| injection_in_result | 7 | 1 | 6 | `structured-field` | polite request, `[SYSTEM]:` prefix, markdown link, French, base64, reference-style image |
+| tool_poisoning | 3 | 1 | 2 | `schema-default` | "REQUIRED:" step, "supersedes" shadowing |
+| dangerous_command | 3 | 2 | 1 | Python reverse shell, PowerShell cradle | `find ~ -delete` |
+| sensitive_path | 2 | 1 | 1 | Windows `%USERPROFILE%\.ssh\id_ecdsa` | `~/.ssh/*` glob |
+| secrets_in_args | 2 | 1 | 1 | Slack bot token | hex-encoded AWS key |
+| pii_in_args | 1 | 0 | 1 | | card number as a JSON number |
+| **Total** | **18** | **6 (33%)** | **12** | | |
+
+Benign held-out: **2 of 6 false positives.** An XML `<system>` element tripped
+`hidden-instruction-tag`, and "Note to the model:" in an honest tool description tripped
+`addresses-the-model`. Across all 16 benign scenarios that is 2 false positives (12%).
+
+**What this says.**
+
+- On attacks written to the detectors' design, recall is 97 to 100%. On attacks written
+  afterwards, it is 33%. The second number is the estimate to quote.
+- The rules that held up target *structure*: credential file paths, reverse-shell
+  shapes, token formats. Those generalize.
+- The rules that failed target *phrasing*: how an injection is worded. Paraphrase defeats
+  them almost every time.
+- The false positives show the cost of blocking on phrasing: honest text uses the same
+  words.
+- This is the case for gatehouse's design: pinning, policy and approval are the controls;
+  content rules are high-signal telemetry for the SOC, not a filter to rely on. Every miss
+  and false positive is in `docs/known-bypasses.md` with a reproducing scenario.
 
 ### Findings the suite produced
 

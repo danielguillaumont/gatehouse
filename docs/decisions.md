@@ -217,3 +217,15 @@ that chain on their own. Alternatives considered:
 - Hand-written ARM rule JSON. Rejected: it duplicates the KQL.
 - The Sentinel "repositories" (CI/CD) feature. Not chosen: it needs a connected GitHub
   repo in the workspace, and a plain deployment shows the same thing more portably.
+
+**D-032 (2026-11-24) The held-out set is written after the detectors, never tuned on, and
+never gated.** I wrote both the scenarios and the rules, so the M2 numbers (97–100%) say
+the rules do what they were designed for, not how they generalize. The held-out set is
+the generalization estimate: 18 attacks and 6 benign scenarios, written after the rules
+were frozen, in the phrasing an attacker or a real tool would use. Results: 6/18
+prevented, 2/6 benign false positives. Rules are not changed in response: a fix would
+make the set a training set. Misses go to `docs/known-bypasses.md`; a later rule change
+needs a *new* held-out set to measure it. CI reports held-out results but doesn't fail on
+them, for the same reason. Alternative considered: fix the obvious misses (hex decoding,
+`find -delete`, globs) now. Rejected for this release: the honest 33% is more useful in
+an evaluation than a tuned 70%, and each fix is listed with a reproducing scenario.
