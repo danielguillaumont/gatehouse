@@ -84,6 +84,20 @@ session correlation, and a reproducible evaluation that is also run against othe
 | Published detection eval | not found | not found | latency only | not found | not found | **yes** (`docs/evaluation.md`) |
 | Windows | no (stated) | claimed | no (roadmap) | binary | implied | yes (CI) |
 
+Notes on the table, re-checked 2026-11-24 before the public release (gateward HEAD
+`d2a65a4a81`, PyPI 0.3.0; mcp-watchdog HEAD `f7d4db5274`, PyPI 0.1.9; both unchanged since
+the first check):
+
+- "Published detection eval: not found" means neither project publishes its own detection
+  or false-positive rate. gateward's README cites the MCPTox benchmark's *attack* success
+  rate (84.2%) to motivate a rule, and mcp-watchdog links the MCPSecBench paper in its
+  references. Neither is an evaluation of the tool itself.
+- mcp-watchdog's README describes 0.1.x changes that reduce false positives (for example
+  on CSS). That is tuning, not a published rate.
+- The quoted phrases above ("Rules are hard-coded…", "No alerting", "Windows not
+  supported", "only strips malicious content and raises alerts") are verbatim from the
+  current READMEs.
+
 ## What gatehouse borrows and credits
 
 - Attack taxonomy and terms (tool poisoning, rug pull, shadowing) from Invariant Labs.

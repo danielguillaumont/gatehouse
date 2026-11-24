@@ -7,9 +7,9 @@ longer matches what you approved, removes the tool from the agent's tool list, b
 calls to it, and logs a `listing.pin_mismatch` detection that the Sentinel rule
 `GH001_rug_pull` alerts on.
 
-In the MVP the block comes from **pinning**, not from content detection: gatehouse
-blocks the tool because it changed, not because the new text looks malicious. Content
-detectors that flag the poisoned description itself arrive in M2.
+Here the block comes from **pinning**, not from content detection: gatehouse blocks the
+tool because it changed, not because the new text looks malicious, so a rewording that no
+detector recognises is caught the same way.
 
 ## 1. Unattended run (good for recording)
 
@@ -22,8 +22,9 @@ uv run python demo/run_demo.py --pause    # waits for Enter between steps
 Add `--kusto http://localhost:8080` to also run the GH001 analytics rule on the
 session's events in the Kusto emulator (see `docs/sentinel-setup.md`).
 
-To record, use ScreenToGif or the Xbox Game Bar (Win+Alt+R) on Windows, or `asciinema rec`
-on Linux/WSL, and run with `--pause`.
+The GIF in the README is recorded from `demo/demo.tape` with
+[VHS](https://github.com/charmbracelet/vhs) by the `demo-gif` workflow on Ubuntu. To record
+by hand, use ScreenToGif on Windows or `asciinema rec` on Linux, with `--pause`.
 
 ## 2. With Claude Code
 
