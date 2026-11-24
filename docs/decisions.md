@@ -165,3 +165,22 @@ remaps:
 - sensitive paths: AML.T0098 (AI Agent Tool Credential Harvesting)
 - protocol smuggling: AML.T0053 (AI Agent Tool Invocation), not prompt injection
 `tests/test_atlas_ids.py` fails if any ID outside the verified list appears.
+
+**D-029 (2026-11-24) M2 content detectors are keyword-gated, bounded regex rules.** Each
+rule (`inspect/rules.py` `PatternRule`) has lower-case keywords that *every* match must
+contain, so the regex only runs when one occurs. Each rule also runs on a copy of the text
+with Unicode format characters removed (zero-width splits), and phrase rules can skip
+matches that are quoted ("a scanner for 'ignore previous instructions' payloads"). Rules
+that need more than a regex use a `validate` hook: Luhn, mod-97 and SSA rules for PII,
+and boundary checks done in Python instead of a leading lookbehind. The benchmark showed
+why that matters: Python evaluates a leading lookbehind or a case-insensitive
+alternation at every position, which cost about 200 ms per MiB; one rule keyed on "tool"
+ran on every agent message. Splitting rules so each has tight keywords and moving
+boundary checks into validators halved the 1 MiB cost. Severity drives the action
+(HIGH/CRITICAL block, MEDIUM/LOW log), so the bulk-email finding is evidence, not a
+block. Alternatives considered: an ML classifier (Prompt Guard style) for injection.
+Deferred, not rejected: it needs a model download and GPU or CPU time per call. The
+deterministic rules are the explainable baseline it would be measured against, and
+`docs/known-bypasses.md` lists what they miss. Also considered: Aho-Corasick over all
+keywords (`pyahocorasick`). Rejected for now: a C dependency for a gain the benchmark
+doesn't need yet.
