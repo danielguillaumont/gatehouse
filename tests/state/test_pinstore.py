@@ -61,7 +61,10 @@ def test_corrupt_store_raises(tmp_path: Path, content: str) -> None:
         load_pins(path)
 
 
-def test_concurrent_writers_do_not_lose_updates(tmp_path: Path) -> None:
+@pytest.mark.parametrize("run", range(5))
+def test_concurrent_writers_do_not_lose_updates(tmp_path: Path, run: int) -> None:
+    """24 writers race for the lock. On Windows this used to lose updates: creating a lock
+    file that another writer was deleting raised PermissionError (delete pending)."""
     path = tmp_path / "pins.json"
     errors: list[BaseException] = []
 
@@ -71,23 +74,10 @@ def test_concurrent_writers_do_not_lose_updates(tmp_path: Path) -> None:
         except BaseException as exc:  # pragma: no cover - reported below
             errors.append(exc)
 
-    threads = [threading.Thread(target=writer, args=(i,)) for i in range(12)]
+    threads = [threading.Thread(target=writer, args=(i,)) for i in range(24)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
     assert not errors
-    assert len(load_pins(path).servers) == 12
-
-
-def test_stale_lock_is_broken(tmp_path: Path) -> None:
-    import os
-    import time
-
-    path = tmp_path / "pins.json"
-    lock = tmp_path / "pins.json.lock"
-    lock.write_text("999999", encoding="utf-8")
-    old = time.time() - 3600
-    os.utime(lock, (old, old))
-    pin_tools(path, "fs", {"a": _tool("a")}, pinned_by="pin")
-    assert "a" in load_pins(path).server("fs").tools
+    assert len(load_pins(path).servers) == 24

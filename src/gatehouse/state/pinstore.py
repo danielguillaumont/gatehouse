@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -82,22 +83,33 @@ def _locked(path: Path) -> Generator[None]:
     lock = path.with_name(path.name + ".lock")
     lock.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + LOCK_TIMEOUT_S
+    last: OSError | None = None
     while True:
         try:
             fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             os.write(fd, str(os.getpid()).encode())
             os.close(fd)
             break
-        except FileExistsError:
+        except FileExistsError as exc:
+            last = exc
             try:
                 if time.time() - lock.stat().st_mtime > LOCK_STALE_S:
                     lock.unlink(missing_ok=True)  # holder crashed
                     continue
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 continue
-            if time.monotonic() > deadline:
-                raise PinStoreError(f"timed out waiting for pin store lock {lock}") from None
-            time.sleep(0.02)
+        except PermissionError as exc:
+            # Windows: creating a file that another process/thread is deleting fails with
+            # "access denied" (delete pending), not "exists". That is contention: retry.
+            # A genuinely unwritable directory ends in the timeout below, with the cause.
+            if sys.platform != "win32":
+                raise PinStoreError(f"cannot create pin store lock {lock}: {exc}") from None
+            last = exc
+        if time.monotonic() > deadline:
+            raise PinStoreError(
+                f"timed out waiting for pin store lock {lock} (last error: {last})"
+            ) from None
+        time.sleep(0.02)
     try:
         yield
     finally:
