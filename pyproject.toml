@@ -1,0 +1,42 @@
+[project]
+name = "gatehouse"
+version = "0.1.0"
+description = "Detection-engineering and SOC layer for AI agent tool use over MCP"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7,<3",
+    "pyyaml>=6.0.1,<7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pyright>=1.1.380",
+    "types-pyyaml",
+]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.14"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+xfail_strict = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "RUF", "T20"]
+# S101: asserts are fine in tests. T20 bans print() — stdout belongs to the MCP protocol.
+# RUF001: tests deliberately contain Unicode look-alikes (that's what they test).
+per-file-ignores = { "tests/**" = ["S101", "RUF001"] }
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"

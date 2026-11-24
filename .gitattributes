@@ -1,0 +1,4 @@
+# Byte-identical files on every OS: policy hashes, pin hashes and fixtures depend on it.
+* text=auto eol=lf
+*.png binary
+*.gif binary
