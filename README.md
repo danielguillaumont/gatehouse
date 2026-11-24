@@ -25,8 +25,7 @@ MCP client  <-- stdio -->  gatehouse  <-- stdio -->  MCP server
 
 ## Status
 
-MVP, M2 and the Sentinel integration are done; M3 (evaluation and write-up) is in
-progress. See `docs/PLAN.md` and `docs/NEXT.md`.
+MVP, M2, the Sentinel integration and the M3 evaluation are done. See `docs/PLAN.md` and `docs/NEXT.md`.
 
 | Area | Status |
 |---|---|
@@ -36,7 +35,7 @@ progress. See `docs/PLAN.md` and `docs/NEXT.md`.
 | Content detectors: tool poisoning and shadowing, injection and exfil beacons in results, dangerous commands, credential paths, PII, invisible Unicode, look-alike names | ✅ M2 |
 | Approval of `require_approval` calls through MCP elicitation | ✅ M2 |
 | Sentinel: Logs Ingestion sink, Bicep (table, DCE, DCR, rules), 6 rules incl. cross-server GH006, validated in the Kusto emulator | ✅ built, **not deployed** ([setup](docs/sentinel-setup.md)) |
-| Held-out evaluation, competitor comparison | 🚧 M3 |
+| Held-out evaluation and competitor comparison (gateward, mcp-watchdog) | ✅ M3 |
 
 ## Results (reproducible)
 
@@ -57,6 +56,11 @@ attacks.** Rules that match structure (credential paths, token formats, reverse-
 shapes) generalize; rules that match phrasing don't. That's why gatehouse's controls are
 pinning, policy and approval, with content detection as SOC telemetry.
 `docs/known-bypasses.md` lists every miss with a scenario that reproduces it.
+
+Against the other two stdio MCP gateways, on the held-out set: gatehouse 6/18 prevented,
+gateward 0.3.0 7/18, mcp-watchdog 0.1.9 1/18 (plus 9 alerted). Benign false positives:
+2, 6 and 0 of 16. Same runner, same commit; details and caveats in
+[`docs/evaluation.md`](docs/evaluation.md#competitor-comparison-m3).
 
 ## Quick start
 

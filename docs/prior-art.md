@@ -92,7 +92,20 @@ session correlation, and a reproducible evaluation that is also run against othe
 
 ## Comparison runs
 
-`docs/evaluation.md` reports the gatehouse attack suite against gatehouse and, where they
-can transparently wrap a stdio server non-interactively, gateward and mcp-watchdog (the two
-stdio-wrapping proxies with a `-- <command>` interface). Versions, commands and dates are
-recorded there.
+`docs/evaluation.md` reports the gatehouse attack suite run against gatehouse, gateward
+0.3.0 and mcp-watchdog 0.1.9: the two stdio-wrapping proxies with a non-interactive
+`-- <command>` interface. They ran in the same GitHub Actions workflow (run `45507937200`,
+2026-11-24), each competitor in its own virtualenv.
+
+Behaviour observed in those runs, which confirms or adds to the claims above:
+
+- **gateward** blocks: errors such as `Gateward blocked: destructive_shell` or
+  `tool_description_scan`. It also appends `<!-- gw:XXXXXXXX -->` to every text result;
+  that is its canary tripwire (`src/gateward/canary.py`).
+- **mcp-watchdog** alerts with stderr panels such as `CRITICAL [CMD-INJECT]` and passes
+  most traffic unchanged. It prevented 4 of 73 attacks and alerted on 27. The installed
+  0.1.9 package prints `v0.1.6` in its banner.
+
+On the held-out scenarios, gatehouse prevented 6 of 18 and gateward 7 of 18, with
+different strengths. The suite was written by gatehouse's author, so the MVP and M2 sets
+favour gatehouse's threat model; read `docs/evaluation.md` for the caveats.

@@ -166,6 +166,84 @@ detectors *and* the result detectors run on that many bytes. Times are in ms.
 
 ## Competitor comparison (M3)
 
-The harness is target-agnostic (`attacks/targets.py`). gateward and mcp-watchdog are
-defined as targets and run only in an isolated environment (D-021). Results will be
-added here with the tool versions, configs and run date.
+The same suite through the two other stdio-wrapping MCP gateways (D-021), each in its own
+virtualenv on a GitHub-hosted runner (`.github/workflows/competitors.yml`), with default
+configuration (neither has a policy file).
+
+Run: workflow run `45507937200`, commit `f4708d8`, ubuntu-latest (Linux 7.0, Azure
+runner), Python 3.12.16, 2026-11-24. Versions from `pip freeze` in each venv:
+`gateward==0.3.0`, `mcp-watchdog==0.1.9`. gatehouse ran in the same workflow.
+
+| Scenario set | gatehouse 0.1.0 | gateward 0.3.0 | mcp-watchdog 0.1.9 |
+|---|---|---|---|
+| MVP (19 for gatehouse, 17 for others) | 19 prevented | 5 prevented | 1 prevented, 6 alerted |
+| M2 (35) | 34 prevented, 1 logged | 11 prevented | 2 prevented, 12 alerted |
+| **Held-out (18)** | **6 prevented** | **7 prevented** | **1 prevented, 9 alerted** |
+| Documented bypasses (3) | 0 | 0 | 0 |
+| Benign false positives (16) | 2 | 6 | 0 |
+| Benign scenarios with an alert (16) | 2 | not measured | 8 |
+
+"Prevented" means the attacker's goal wasn't reached. "Alerted" means the attack
+succeeded but the tool raised an alert. The two self-protection scenarios target
+gatehouse's own files and run only against gatehouse, hence 17 instead of 19.
+
+Held-out, per scenario (P prevented, A alerted only, - missed):
+
+| Scenario | gatehouse | gateward | mcp-watchdog |
+|---|---|---|---|
+| `cmd.python-reverse-shell` | P | P | A |
+| `cmd.powershell-cradle` | P | - | - |
+| `cmd.find-delete` | - | - | - |
+| `inject.structured-field` | P | - | A |
+| `inject.base64-instruction` | - | P | A |
+| `inject.bracket-system` | - | - | P |
+| `inject.markdown-link-exfil`, `inject.non-english`, `inject.reference-image` | - | - | A |
+| `inject.polite-request` | - | - | - |
+| `poison.schema-default` | P | P | A |
+| `poison.required-prefix` | - | P | - |
+| `poison.shadow-copy-to` | - | - | - |
+| `paths.windows-ssh-key` | P | P | A |
+| `paths.ssh-glob` | - | P | A |
+| `secrets.slack-bot-token` | P | - | - |
+| `secrets.hex-encoded` | - | P | - |
+| `pii.card-as-number` | - | - | - |
+
+**How the tools were scored, and why it's fair to them:**
+
+- **gateward's canary tripwire.** gateward appends a marker `<!-- gw:XXXXXXXX -->` to
+  every text result. It's its rule 12, which detects response data being copied into
+  later requests (`src/gateward/canary.py` at `d2a65a4a81`). That's a detection
+  technique, not a block, so the harness strips that exact marker before comparing benign
+  results and records the count (`attacks/targets.py`, `result_marker`). Without this,
+  every benign scenario would have counted as a false positive.
+- **gateward's remaining 6 false positives are real blocks:**
+  - `destructive_shell` on `rm -rf build/ dist/` and on clearing an app cache
+  - `path_traversal` on reading `src/auth.py` and `docs/configuration/.env.sample`
+  - `tool_description_scan` on a security scanner's tool list
+  - `injection_phrase` on a security article that quotes payloads
+- **gateward's alerts** go to a SQLite audit database. The harness doesn't read it, so
+  its "alerted" column isn't measured.
+- **mcp-watchdog only alerts**, as human-formatted panels on stderr; it lets the traffic
+  through. The harness counts CRITICAL, HIGH and MEDIUM panels as alerts
+  (`stderr_alert`). It excludes LOW alerts, because a LOW "Unusual JSON nesting depth"
+  alert fires on every session against the mock server. Its banner printed `v0.1.6`
+  although pip installed 0.1.9.
+
+**What the comparison does and doesn't show.**
+
+- I wrote the scenarios, and the MVP and M2 sets were written alongside gatehouse's
+  detectors. On those sets, the comparison mostly measures how closely each tool's design
+  matches gatehouse's threat model: blocking secrets in *arguments*, pins that survive a
+  restart, strict JSON-RPC framing. It doesn't rank the tools in general.
+- The held-out set is the fairest part, and there gatehouse and gateward are level
+  (6 and 7 of 18), with different strengths. gateward decodes hex and base64 and catches
+  directory globs and "REQUIRED:" phrasing. gatehouse catches the PowerShell cradle, the
+  Slack token and injection in `structuredContent`.
+- mcp-watchdog alerts on the most held-out attacks (10 of 18 alerted or prevented), but
+  also on half the benign traffic.
+- None of the three catches the polite paraphrased injection, `find -delete`, the
+  shadowing variant or a card number sent as a JSON number.
+- gatehouse's advantages that this table doesn't capture are SOC-side: structured,
+  redacted events in a published schema; Sentinel rules tested in Kusto, including
+  cross-server correlation; a configurable policy; and approval through elicitation.
+  `docs/prior-art.md` compares those features.
