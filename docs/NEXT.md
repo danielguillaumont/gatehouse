@@ -1,7 +1,7 @@
 # Where work stopped and what's next
 
 Last updated **2026-11-24**. Status: **MVP, M2, Sentinel integration and M3 evaluation
-complete.** Remaining: the interview guide, then optional improvements.
+complete.** `docs/interview-guide.md` is written. What's left is optional.
 
 ## State
 
@@ -47,15 +47,14 @@ complete.** Remaining: the interview guide, then optional improvements.
 
 ## Next steps, in order
 
-1. `docs/interview-guide.md`.
-2. Optional improvements, each needing a **new** held-out set to measure (D-032):
+1. Optional improvements, each needing a **new** held-out set to measure (D-032):
    - hex decoding for secrets; base64 decoding for results
    - per-rule severity overrides in the policy (fixes the two held-out false positives
      without a global `high: log`)
    - more destructive verbs (`find -delete`, `dd`, `mkfs`), credential-directory globs
    - scan numbers for PII; reference-style markdown images
    - read gateward's SQLite audit log so its alerts can be scored
-3. Deploy the Sentinel resources yourself (`docs/sentinel-setup.md`); nothing was deployed.
+2. Deploy the Sentinel resources yourself (`docs/sentinel-setup.md`); nothing was deployed.
 
 ## Caveats
 
