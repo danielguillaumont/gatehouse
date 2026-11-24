@@ -23,6 +23,7 @@ KNOWN = {
     "AML.T0081": "Modify AI Agent Configuration",
     "AML.T0086": "Exfiltration via AI Agent Tool Invocation",
     "AML.T0098": "AI Agent Tool Credential Harvesting",
+    "AML.T0101": "Data Destruction via AI Agent Tool Invocation",
     "AML.T0110": "AI Agent Tool Poisoning",
 }
 SCANNED = ["src", "attacks", "detections/rules", "docs/threat-model.md", "README.md"]

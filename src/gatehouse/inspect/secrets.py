@@ -7,12 +7,15 @@ public gitleaks / detect-secrets catalogs; patterns here are written from scratc
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from gatehouse.events.schema import Severity
 from gatehouse.inspect.base import Finding
+from gatehouse.inspect.invisible import strip_invisible
 from gatehouse.inspect.walk import WalkStats, iter_strings
 
 DETECTOR_ID = "args.secrets"
@@ -241,20 +244,72 @@ def detect_secrets(
     fingerprint: Fingerprinter | None = None,
     stats: WalkStats | None = None,
 ) -> list[Finding]:
-    """Scan every string (and key) in ``value`` for secrets."""
+    """Scan every string (and key) in ``value`` for secrets.
+
+    Each string is also scanned with invisible characters removed and with base64
+    substrings decoded, so ``ghp_<ZWSP>...`` and ``base64(AKIA...)`` are caught too.
+    """
     findings: list[Finding] = []
     for where, text in iter_strings(value, root, stats):
-        for m in find_secrets(text):
-            findings.append(
-                Finding(
-                    detector_id=DETECTOR_ID,
-                    rule_id=m.rule.rule_id,
-                    severity=m.rule.severity,
-                    summary=f"{m.rule.description}: {mask(m.value)}",
-                    location=where,
-                    mitre=_MITRE,
-                    owasp=_OWASP,
-                    fingerprint=fingerprint(m.value) if fingerprint else None,
+        seen: set[tuple[str, str]] = set()
+        for variant, how in _variants(text):
+            for m in find_secrets(variant):
+                key = (m.rule.rule_id, m.value)
+                if key in seen:
+                    continue
+                seen.add(key)
+                findings.append(
+                    Finding(
+                        detector_id=DETECTOR_ID,
+                        rule_id=m.rule.rule_id,
+                        severity=m.rule.severity,
+                        summary=f"{m.rule.description}{how}: {mask(m.value)}",
+                        location=where,
+                        mitre=_MITRE,
+                        owasp=_OWASP,
+                        fingerprint=fingerprint(m.value) if fingerprint else None,
+                    )
                 )
-            )
     return findings
+
+
+# A maximal run of base64/base64url characters. No lookbehind: a match always starts at
+# the beginning of a run, and a leading lookbehind would run at every position (2.6x
+# slower on 1 MiB of prose). Runs containing '-' or '_' (identifiers, base64url) are
+# skipped; '=' in the wrong place is rejected by the strict decode.
+_B64 = re.compile(r"[A-Za-z0-9+/=_\-]{16,8192}")
+MAX_B64_CANDIDATES = 32
+
+
+def _decode_b64(candidate: str) -> str | None:
+    if len(candidate) % 4:
+        return None
+    try:
+        raw = base64.b64decode(candidate, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw:
+        return None
+    printable = sum(1 for b in raw if 32 <= b < 127 or b in (9, 10, 13))
+    if printable < 0.9 * len(raw):
+        return None
+    return raw.decode("ascii", "replace")
+
+
+def _variants(text: str) -> list[tuple[str, str]]:
+    out = [(text, "")]
+    stripped = strip_invisible(text)
+    if stripped != text:
+        out.append((stripped, " (hidden by invisible characters)"))
+    tried = 0
+    for m in _B64.finditer(text):
+        candidate = m.group(0)
+        if "-" in candidate or "_" in candidate:
+            continue
+        tried += 1
+        if tried > MAX_B64_CANDIDATES:
+            break
+        decoded = _decode_b64(candidate)
+        if decoded is not None:
+            out.append((decoded, " (base64-encoded)"))
+    return out
