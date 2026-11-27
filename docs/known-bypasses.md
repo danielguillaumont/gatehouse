@@ -50,10 +50,10 @@ of blocking it. Per-rule overrides would be the proper fix.
 
 | Not inspected yet | Status |
 |---|---|
-| `resources/*`, `prompts/*`, sampling and elicitation content | Forwarded unchanged; inspection planned for M5 |
+| `resources/*` and `prompts/*` content | Forwarded unchanged; inspection planned. Sampling and elicitation requests (legacy server requests and 2026-07-28 MRTR input requests) are inspected since v0.2.0-alpha (D-036). |
 | Streamable HTTP transport | M4. Only stdio is proxied today. |
-| 2026 stateless protocol era | gatehouse answers `server/discover` with -32601, so clients fall back to the `initialize` era, which it fully inspects (D-003). A client that refuses to fall back can't connect through gatehouse. That fails closed, not open. |
-| Server-sent elicitation that imitates gatehouse | A malicious server can send its own `elicitation/create` whose message looks like a gatehouse approval prompt, to get a "yes" for something else. gatehouse forwards server requests unchanged. Mitigation idea: tag gatehouse prompts with a per-install phrase the user learns, and flag server elicitations that mention gatehouse. |
+| 2026-07-28 era | Inspected on stdio since v0.2.0-alpha (D-036). A gatehouse-run listing before a stateless call adds one upstream round trip. A modern client without the elicitation capability can't approve calls, so they are blocked. |
+| Server-sent elicitation that imitates gatehouse | **Partly closed in v0.2.0-alpha.** Elicitations that mention gatehouse, and MRTR results with a `requestState` shaped like gatehouse's, are withheld. A prompt that imitates the *layout* of gatehouse's message without naming it still reaches the user. A per-install phrase in gatehouse prompts would close it. |
 
 If you find a bypass that isn't listed here, it's a bug in this document. Please open an
 issue with a scenario.

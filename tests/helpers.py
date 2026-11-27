@@ -15,9 +15,11 @@ from gatehouse.inspect.pipeline import ScanConfig
 from gatehouse.inspect.self_protect import protected_variants
 from gatehouse.policy.loader import load_policy
 from gatehouse.proxy.integrity import PolicyWatcher
+from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Approver, Router, RouterConfig
 
 FINGERPRINT_KEY = b"k" * 32
+MODERN = "2026-07-28"
 
 
 def tool_def(name: str, description: str = "A tool.", **extra: Any) -> dict[str, Any]:
@@ -117,6 +119,54 @@ class RouterHarness:
         assert reply["id"] == rid
         return reply
 
+    # -- modern era (2026-07-28) -------------------------------------------------------
+    @staticmethod
+    def meta(capabilities: dict[str, Any] | None = None, version: str = MODERN) -> dict[str, Any]:
+        return {
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientCapabilities": capabilities or {},
+            "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1"},
+        }
+
+    async def modern_request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        capabilities: dict[str, Any] | None = None,
+    ) -> int:
+        rid = self._id()
+        body = {**(params or {}), "_meta": self.meta(capabilities)}
+        await self.client({"jsonrpc": "2.0", "id": rid, "method": method, "params": body})
+        return rid
+
+    async def modern_list_tools(self, tools: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+        rid = await self.modern_request("tools/list")
+        result = {"resultType": "complete", "tools": tools, "ttlMs": 60000, "cacheScope": "public"}
+        await self.server({"jsonrpc": "2.0", "id": rid, "result": {**result, **extra}})
+        reply = self.to_client[-1]
+        assert reply["id"] == rid
+        return reply["result"]
+
+    async def answer_internal_listing(self, tools: list[dict[str, Any]]) -> bool:
+        """If gatehouse sent its own tools/list upstream, answer it."""
+        for msg in reversed(self.to_server):
+            rid = msg.get("id")
+            if msg.get("method") == "tools/list" and str(rid).startswith("gatehouse-internal-"):
+                await self.server(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": rid,
+                        "result": {
+                            "resultType": "complete",
+                            "tools": tools,
+                            "ttlMs": 0,
+                            "cacheScope": "public",
+                        },
+                    }
+                )
+                return True
+        return False
+
     def forwarded(self, rid_or_method: str) -> bool:
         return any(m.get("method") == rid_or_method for m in self.to_server)
 
@@ -132,6 +182,7 @@ def make_harness(
     server_name: str = "srv",
     approver: Approver | None = None,
     approval_timeout: float | None = None,
+    http: bool = False,
 ) -> RouterHarness:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(textwrap.dedent(policy_yaml), encoding="utf-8")
@@ -154,6 +205,8 @@ def make_harness(
         policy_watcher=PolicyWatcher(policy_path, load.sha256),
         approver=approver,
         approval_timeout=approval_timeout,
+        state_signer=StateSigner(FINGERPRINT_KEY),
+        http=http,
     )
     harness: RouterHarness
 

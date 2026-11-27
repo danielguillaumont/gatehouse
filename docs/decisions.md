@@ -294,6 +294,70 @@ this revision on stdio and Streamable HTTP, with a dual-era `mode="auto"` client
 `server/discover` and falls back to `initialize` on any error except a disjoint -32022
 (`mcp/client/_probe.py`).
 
+**D-036 (2026-11-27) One gatehouse, two protocol eras; approval for 2026-07-28 clients goes
+through MRTR.** The 2026-07-28 revision removes `initialize`. Each request carries its
+version and client capabilities in `_meta`, and servers may answer `tools/call`,
+`prompts/get` and `resources/read` with an `InputRequiredResult`, which the client then
+retries. gatehouse keeps the 2024-11-05 … 2025-11-25 handshake and adds the new era:
+- **Era latching.** A connection's era is set by its first request other than
+  `server/discover`: `initialize` means legacy, and a `_meta` protocol version means
+  modern. Mixing them gets -32600 and `protocol.era_conflict`. A modern request with a
+  broken envelope gets -32602 and `protocol.invalid_meta`. A modern version gatehouse
+  can't inspect gets -32022, which lists the versions it can. Requests with neither are
+  forwarded as in v0.1, because a client is allowed to probe.
+- **`server/discover` is forwarded and inspected.** In v0.1 gatehouse answered it with
+  -32601 so that clients fell back to the handshake. Now:
+  - `supportedVersions` is filtered to versions gatehouse inspects;
+  - `instructions` are scanned like a tool description, and removed if they would block;
+  - `ttlMs` is capped;
+  - modern versions are pinned per server.
+  A discover error after a server was pinned as modern is a downgrade
+  (`protocol.downgrade`, HIGH), and so is a version that disappears from
+  `supportedVersions`. The policy refuses it unless `protocol.allow_downgrade` is set,
+  and the later `initialize` gets -32022. The same applies when the client asks for the
+  pinned legacy revision and the handshake negotiates an older one.
+- **`resultType` is validated.** A missing `resultType` is treated as complete and
+  logged, as earlier servers omit it. `input_required` on a method that may not use it,
+  or any unknown value, is withheld, because gatehouse can't inspect what it doesn't
+  understand (ADR-0001).
+- **MRTR from servers is inspected, not trusted.**
+  - Each input request must use a capability the request declared.
+  - Elicitations are checked for credential fields, phishing URLs and impersonation of
+    gatehouse.
+  - Sampling requests get the injection rules, or are refused when the policy sets
+    `protocol.sampling: block`.
+  - A `requestState` that imitates gatehouse's own is flagged.
+  Anything flagged is withheld, since nothing can be approved after the fact. What the
+  user answers is scanned for secrets: `inputResponses`, and legacy elicitation results.
+  A hit blocks the call, or the server gets a decline. On stdio, a modern server must
+  not send JSON-RPC requests at all, so gatehouse drops any it sends.
+- **Approval through MRTR.** A modern client can't be sent an `elicitation/create`
+  request. So gatehouse answers a `require_approval` call with its own
+  `InputRequiredResult` that asks the user to approve. The client's retry carries
+  gatehouse's `requestState`, which is:
+  - HMAC-signed with a key derived from the install key;
+  - bound to the method, tool and argument fingerprint;
+  - valid for 10 minutes, and redeemable once.
+  gatehouse strips its own fields before forwarding, so the server sees a plain request.
+  It also records a short grant for that exact call (10 minutes, 8 uses), so the
+  server's own MRTR rounds for it don't prompt the user again. Without the elicitation
+  capability, the call is blocked.
+- **Stateless calls get a fresh listing.** A modern client may call a tool it listed in
+  another process or took from its cache. If this connection has no inspected listing,
+  or its listing is stale, gatehouse lists upstream itself. It runs the usual pin and
+  definition checks on that listing, and only then decides. A timeout fails closed.
+- **Caching and subscriptions.** A listing gatehouse filtered is marked
+  `cacheScope: private`, so a shared cache can't serve one policy's view to a caller
+  behind another policy. Subscription notifications must match a `subscriptions/listen`
+  on the same channel and its filter; any others are dropped.
+Alternatives considered:
+- Keep answering `server/discover` with -32601 and force every client onto the
+  handshake. Rejected: 2026-07-28 servers may drop the handshake, and SDK 2.3.0 already
+  defaults to `mode="auto"`.
+- Terminate the protocol and run SDK client and server objects back to back. Rejected:
+  it violates message-level proxying, and new fields would be lost.
+- Approve by blocking with a message. Kept only for clients without elicitation.
+
 **D-037 (2026-11-27) Session flow control stays the core of v2, but it is not a first.**
 The landscape check (`docs/research/landscape-2026-11.md`) found that Pipelock already
 ships a `lethal-trifecta` chain detector at its MCP proxy (`internal/mcp/chains/matcher.go`

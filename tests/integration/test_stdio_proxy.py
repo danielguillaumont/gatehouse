@@ -14,6 +14,7 @@ from gatehouse.protocol import SUPPORTED_VERSIONS
 
 pytestmark = pytest.mark.integration
 
+TOFU = "version: 1\ndefault_action: allow\npinning: tofu\n"
 SERVER = Path(__file__).resolve().parents[2] / "demo" / "weather_server.py"
 
 
@@ -66,13 +67,21 @@ def test_proxy_round_trip_tofu_then_rug_pull(tmp_path: Path) -> None:
     assert mismatch and mismatch[0]["ToolName"] == "get_forecast"
 
 
-def test_discover_probe_falls_back_to_initialize(tmp_path: Path) -> None:
-    with StdioClient(
-        _gatehouse(tmp_path, "version: 1\ndefault_action: allow\npinning: tofu\n"), timeout=30
-    ) as c:
+def test_bare_discover_probe_falls_back_to_initialize(tmp_path: Path) -> None:
+    # No modern _meta: the SDK server answers as a legacy server would, gatehouse passes
+    # the error through, and the client falls back to the handshake (D-036).
+    with StdioClient(_gatehouse(tmp_path, TOFU), timeout=30) as c:
         probe = c.request("server/discover", {})
         assert probe["error"]["code"] == -32601
         assert c.initialize()["protocolVersion"]
+
+
+def test_gatehouse_client_connects_modern(tmp_path: Path) -> None:
+    with StdioClient(_gatehouse(tmp_path, TOFU), timeout=30) as c:
+        found = c.connect("auto")
+        assert c.era == "modern" and "2026-07-28" in found["supportedVersions"]
+        assert sorted(t["name"] for t in c.list_tools()) == ["get_forecast", "list_cities"]
+        assert "Sunny" in json.dumps(c.call_tool("get_forecast", {"city": "Lyon"}))
 
 
 def test_invalid_policy_fails_closed_end_to_end(tmp_path: Path) -> None:

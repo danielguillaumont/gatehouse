@@ -87,6 +87,27 @@ class FindingActions(_Strict):
         return FindingAction(getattr(self, severity))
 
 
+class SamplingMode(StrEnum):
+    INSPECT = "inspect"  # scan server sampling requests like tool results
+    BLOCK = "block"  # refuse every server sampling request (deprecated feature, SEP-2577)
+
+
+DEFAULT_MAX_TTL_MS = 300_000
+
+
+class ProtocolSettings(_Strict):
+    """Protocol-level controls (MCP 2026-07-28). See docs/policy.md#protocol."""
+
+    # Cache hints (`ttlMs`) above this are lowered, so a client re-lists (and gatehouse
+    # re-checks pins) at least this often. 0 disables client caching of inspected results.
+    max_ttl_ms: Annotated[StrictInt, Field(ge=0, le=86_400_000)] = DEFAULT_MAX_TTL_MS
+    # A server that was seen speaking a newer protocol revision and now answers with an
+    # older one (e.g. fails `server/discover` so the client falls back to `initialize`)
+    # is a downgrade. False: the downgraded session is refused.
+    allow_downgrade: bool = False
+    sampling: SamplingMode = SamplingMode.INSPECT
+
+
 class ServerBlock(_Strict):
     tools: dict[Pattern, RuleSpec] = Field(default_factory=dict[str, ToolRule])
     pinning: PinningMode | None = None
@@ -138,6 +159,7 @@ class Policy(_Strict):
     default_action: Action
     pinning: PinningMode = PinningMode.STRICT
     findings: FindingActions = Field(default_factory=FindingActions)
+    protocol: ProtocolSettings = Field(default_factory=ProtocolSettings)
     servers: dict[Pattern, ServerBlock] = Field(default_factory=dict[str, ServerBlock])
 
     _rules: tuple[CompiledRule, ...] = PrivateAttr(default=())

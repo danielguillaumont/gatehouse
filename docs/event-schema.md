@@ -49,18 +49,24 @@ disagree. `SchemaVersion` is 1.
 | `session.started` / `session.ended` | gatehouse process start and stop | PinnedSpecVersion, Command, ReturnCode |
 | `policy.loaded` / `policy.load_failed` | startup | PolicyPath, ErrorKind (failure means every call is blocked) |
 | `policy.tampered` | policy file changed on disk mid-session | CurrentSha256, Path |
-| `protocol.negotiated` | `initialize` completed | |
-| `protocol.unsupported_version` | client asked for a version gatehouse can't inspect | |
-| `protocol.discover_downgraded` | `server/discover` probe answered so the client falls back to `initialize` | |
+| `protocol.negotiated` | `initialize` completed, or a `server/discover` result was inspected | SupportedVersions, Removed (versions gatehouse can't inspect, filtered out) |
+| `protocol.unsupported_version` | a version gatehouse can't inspect, or a refused downgrade | Supported |
+| `protocol.invalid_meta` | a 2026-07-28 request without a valid `_meta` envelope (-32602) | |
+| `protocol.era_conflict` | `initialize` and 2026-07-28 requests mixed on one connection | Era |
+| `protocol.invalid_result` | a 2026-07-28 result with a missing or unknown `resultType`, or `input_required` where it is not allowed | |
+| `protocol.header_mismatch` | Streamable HTTP headers that disagree with the body (-32020) | Header |
+| `protocol.unsolicited_notification` | a subscription notification the client never asked for (dropped) | |
+| `protocol.cache_hint_capped` | `ttlMs` lowered to the policy maximum | TtlMs, MaxTtlMs |
+| `server_request.input_required` | a server answered with an MRTR `InputRequiredResult` | Methods, HasRequestState, FindingCount |
 | `protocol.invalid_frame` / `batch_rejected` / `oversized_frame` / `unsolicited_response` | framing violations | |
-| `tools.listed` | a `tools/list` result was inspected | Offered, Visible, Filtered, PinningMode |
+| `tools.listed` | a `tools/list` result was inspected | Offered, Visible, Filtered, PinningMode, ListedBy (`client`, or `gatehouse` for its own listing before a stateless call) |
 | `tools.list_changed` | server sent `notifications/tools/list_changed` | |
 | `tool.call` | every `tools/call` request | FindingCount |
 | `tool.result` | every `tools/call` response | IsError, HasError, FindingCount |
-| `server.request` | server-initiated request (sampling, elicitation, roots) | |
+| `server.request` | server-initiated request (sampling, elicitation, roots); 2026-07-28 servers must not send any | FindingCount |
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
 | `pin.store_error` | pin store unreadable or unwritable | |
-| `approval.requested` / `granted` / `denied` | human approval via elicitation | |
+| `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients | Channel (`mrtr`) |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
 | `gatehouse.internal_error` | a bug or an upstream that can't start | |
 | `gatehouse.fail_open` | telemetry lost (the only fail-open path, ADR-0001) | Component |

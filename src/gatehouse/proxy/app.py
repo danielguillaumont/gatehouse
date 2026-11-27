@@ -24,6 +24,7 @@ from gatehouse.protocol import PINNED_SPEC_VERSION
 from gatehouse.proxy.agent import agent_session_id
 from gatehouse.proxy.framing import DEFAULT_MAX_FRAME_BYTES
 from gatehouse.proxy.integrity import PolicyWatcher
+from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Router, RouterConfig, Send
 from gatehouse.proxy.stdio import run_stdio
 
@@ -105,7 +106,8 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         policy_sha256=load.sha256,
     )
     emitter = build_emitter(opts, context)
-    fingerprinter = Fingerprinter(load_or_create_key(opts.hmac_key_path))
+    install_key = load_or_create_key(opts.hmac_key_path)
+    fingerprinter = Fingerprinter(install_key)
 
     emitter.emit(
         EventType.SESSION_STARTED,
@@ -138,6 +140,8 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         fingerprinter=fingerprinter,
         policy_watcher=PolicyWatcher(opts.policy_path, load.sha256),
         approval_timeout=opts.approval_timeout if opts.approval_timeout > 0 else None,
+        # MRTR approval prompts (2026-07-28 clients); --approval-timeout 0 disables them too
+        state_signer=StateSigner(install_key) if opts.approval_timeout > 0 else None,
     )
     return config, emitter
 

@@ -161,9 +161,38 @@ message naming the server, the tool, why approval is needed and the argument *na
 - Events: `approval.requested`, then `approval.granted` or `approval.denied`, then the
   `tool.call` event with action `approved`, `denied` or `blocked`.
 
-Known gap: a malicious server can send its *own* `elicitation/create` with text that
-imitates gatehouse's prompt. gatehouse forwards server requests unchanged
-(`docs/known-bypasses.md`).
+**2026-07-28 clients** can't be sent requests, so gatehouse asks through MRTR instead: it
+answers the `tools/call` itself with an `InputRequiredResult` holding the same form under
+the key `gatehouse.approval`, plus a signed `requestState`. The client shows the form and
+retries. The state is bound to the exact tool and arguments, expires after 10 minutes and
+works once; gatehouse removes its own fields before forwarding the approved call, and
+lets the server's own follow-up rounds for that same call through without asking again
+(10 minutes, 8 uses). The events carry `Details.Channel: mrtr` (D-036).
+
+Server requests and MRTR input requests that imitate gatehouse's prompt (they mention
+gatehouse, or carry a `requestState` shaped like its own) are withheld
+(`server_request.elicitation/mentions-gatehouse`, `server_request.shape/forged-gatehouse-state`).
+
+## Protocol settings
+
+```yaml
+protocol:
+  max_ttl_ms: 300000      # cap on server cache hints (ttlMs); 0 disables client caching
+  allow_downgrade: false  # true: report protocol downgrades, don't refuse them
+  sampling: inspect       # or block: refuse every server sampling request
+```
+
+- **`max_ttl_ms`.** 2026-07-28 servers tell clients how long to cache discover, list and
+  read results. A long TTL lets a client keep using a tool list after the server
+  changed it, so gatehouse lowers larger values (`protocol.cache_hint_capped`). A
+  listing gatehouse filtered is also marked `cacheScope: private`.
+- **`allow_downgrade`.** gatehouse remembers the protocol revisions each server spoke (in
+  the pin store). If a server that spoke 2026-07-28 later fails `server/discover`, drops
+  that version, or negotiates an older handshake revision than the one the client asked
+  for, that's a downgrade: an attacker in the middle, or a swapped server, pushing the
+  client to a revision with weaker guarantees. By default gatehouse refuses it.
+- **`sampling`.** Sampling requests are inspected for injected instructions either way;
+  `block` refuses them outright.
 
 ## Load errors → fail closed
 

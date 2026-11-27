@@ -5,7 +5,12 @@ File format (JSON, version 1)::
     {"version": 1,
      "servers": {"<server name>": {"tools": {"<tool name>": {
          "sha256": "...", "pinned_at": "...", "pinned_by": "pin|tofu",
-         "definition": {...pinned view...}}}}}}
+         "definition": {...pinned view...}}},
+         "protocol": {"versions": ["2026-07-28", ...], "first_seen": "...",
+                      "last_seen": "..."}}}}
+
+``protocol`` (optional, v2) records every protocol revision the server was seen
+answering, so a later downgrade is detectable (``inspect/protocol.py``).
 
 Writes take an exclusive lock file and replace the store atomically, so concurrent
 wrappers (TOFU) and ``gatehouse pin`` can't corrupt it.
@@ -45,10 +50,19 @@ class ToolPin(BaseModel):
     definition: dict[str, Any]
 
 
+class ProtocolPin(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    versions: tuple[str, ...] = ()
+    first_seen: datetime
+    last_seen: datetime
+
+
 class ServerPins(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tools: dict[str, ToolPin] = Field(default_factory=dict[str, ToolPin])
+    protocol: ProtocolPin | None = None
 
 
 class PinStore(BaseModel):
@@ -163,7 +177,31 @@ def pin_tools(
                 definition=pinned_view(definition),
             )
         servers = dict(store.servers)
-        servers[server] = ServerPins(tools=current)
+        servers[server] = ServerPins(tools=current, protocol=store.server(server).protocol)
+        updated = PinStore(servers=servers)
+        _atomic_write(path, json.dumps(updated.model_dump(mode="json"), indent=2) + "\n")
+        return updated
+
+
+MAX_PINNED_VERSIONS = 16
+
+
+def pin_protocol(path: Path, server: str, versions: tuple[str, ...]) -> PinStore:
+    """Add ``versions`` to the revisions ``server`` was seen speaking (never removes)."""
+    with _locked(path):
+        store = load_pins(path)
+        entry = store.server(server)
+        now = datetime.now(UTC)
+        old = entry.protocol
+        known = tuple(old.versions) if old else ()
+        merged = tuple(dict.fromkeys((*known, *versions)))[:MAX_PINNED_VERSIONS]
+        if old is not None and merged == known:
+            return store  # nothing new: don't rewrite the file on every session
+        proto = ProtocolPin(
+            versions=merged, first_seen=old.first_seen if old else now, last_seen=now
+        )
+        servers = dict(store.servers)
+        servers[server] = ServerPins(tools=dict(entry.tools), protocol=proto)
         updated = PinStore(servers=servers)
         _atomic_write(path, json.dumps(updated.model_dump(mode="json"), indent=2) + "\n")
         return updated

@@ -30,11 +30,17 @@ class EventType(StrEnum):
     # protocol
     PROTOCOL_NEGOTIATED = "protocol.negotiated"
     PROTOCOL_UNSUPPORTED_VERSION = "protocol.unsupported_version"
-    PROTOCOL_DISCOVER_DOWNGRADED = "protocol.discover_downgraded"
     PROTOCOL_INVALID_FRAME = "protocol.invalid_frame"
     PROTOCOL_BATCH_REJECTED = "protocol.batch_rejected"
     PROTOCOL_OVERSIZED_FRAME = "protocol.oversized_frame"
     PROTOCOL_UNSOLICITED_RESPONSE = "protocol.unsolicited_response"
+    # protocol, 2026-07-28 (v2)
+    PROTOCOL_INVALID_META = "protocol.invalid_meta"
+    PROTOCOL_ERA_CONFLICT = "protocol.era_conflict"
+    PROTOCOL_INVALID_RESULT = "protocol.invalid_result"
+    PROTOCOL_HEADER_MISMATCH = "protocol.header_mismatch"
+    PROTOCOL_UNSOLICITED_NOTIFICATION = "protocol.unsolicited_notification"
+    PROTOCOL_CACHE_HINT_CAPPED = "protocol.cache_hint_capped"
     # policy
     POLICY_LOADED = "policy.loaded"
     POLICY_LOAD_FAILED = "policy.load_failed"
@@ -45,6 +51,7 @@ class EventType(StrEnum):
     TOOL_CALL = "tool.call"
     TOOL_RESULT = "tool.result"
     SERVER_REQUEST = "server.request"
+    SERVER_INPUT_REQUIRED = "server_request.input_required"  # MRTR (2026-07-28)
     # pinning
     PIN_CREATED = "pin.created"
     PIN_STORE_ERROR = "pin.store_error"

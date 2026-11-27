@@ -27,12 +27,16 @@ async def test_initialize_is_forwarded_and_recorded(tmp_path: Path) -> None:
     assert neg["UpstreamName"] == "up"
 
 
-async def test_discover_is_answered_locally_with_method_not_found(tmp_path: Path) -> None:
+async def test_discover_probe_is_forwarded_and_legacy_error_passes_through(tmp_path: Path) -> None:
+    # A dual-era client probes server/discover; a legacy server's error lets it fall back
+    # to initialize (2026-07-28 transports/stdio "Backward Compatibility"). D-036.
     h = make_harness(tmp_path, ALLOW_ALL_TOFU)
     await h.client({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}})
-    assert not h.to_server
+    assert h.to_server[-1]["method"] == "server/discover"
+    await h.server({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "nope"}})
     assert h.to_client[-1]["error"]["code"] == -32601
-    assert h.events("protocol.discover_downgraded")
+    await h.initialize()
+    assert h.events("protocol.negotiated")
 
 
 async def test_unsupported_negotiated_version_is_blocked(tmp_path: Path) -> None:
