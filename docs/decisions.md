@@ -250,3 +250,46 @@ demo GIF is rendered by VHS on Ubuntu from `demo/demo.tape` and committed by han
 workflow needs no write access. Alternatives: an allowlist regex for "CANARY" (rejected:
 it would also hide a real secret pasted next to that word); a bot commit of the GIF
 (rejected: needs `contents: write`).
+
+## 2026-11-27 (v2)
+
+**D-035 (2026-11-27) v2 targets MCP 2026-07-28, read from the specification repository.**
+Before writing protocol code I fetched the spec pages and the TypeScript schema from
+`modelcontextprotocol/modelcontextprotocol` at commit `fdc75bd0668db05f5b43e4fc76c2e5aa54296a42`
+(main, 2026-11-27): `docs/specification/2026-07-28/{changelog, basic/index, basic/versioning,
+basic/transports/stdio, basic/transports/streamable-http, basic/patterns/mrtr,
+basic/patterns/subscriptions, server/discover, server/utilities/caching, server/tools,
+client/elicitation, basic/authorization/*}.mdx` and `schema/2026-07-28/schema.ts`. Fetched
+2026-11-27. The facts the v2 design depends on, all checked against that text:
+- No `initialize`; every request carries `io.modelcontextprotocol/protocolVersion` and
+  `io.modelcontextprotocol/clientCapabilities` in `_meta` (missing → -32602).
+  `server/discover` is mandatory for servers. Version mismatch → -32022 with
+  `data.supported`.
+- Error codes: -32020 HeaderMismatch, -32021 MissingRequiredClientCapability, -32022
+  UnsupportedProtocolVersion. -32000…-32019 is a legacy range new code should not use.
+- Every result carries `resultType` (`complete` or `input_required`); unknown values are
+  invalid; absent means `complete` only for earlier-protocol servers.
+- MRTR: `InputRequiredResult` with `inputRequests` (elicitation/create,
+  sampling/createMessage, roots/list only) and an opaque `requestState`, allowed only on
+  `tools/call`, `resources/read`, `prompts/get`. The retry is a new request id carrying
+  `inputResponses` and the echoed `requestState`.
+- **On stdio the server MUST NOT write JSON-RPC requests**, and on Streamable HTTP it must
+  not send requests on any stream. So in the modern era gatehouse's own approval prompt
+  (D-030, a server-initiated `elicitation/create`) is not allowed: it has to be an MRTR
+  `InputRequiredResult`.
+- **"An open connection, such as a STDIO process, is not a conversation or session."**
+  Clients may cache `tools/list` (`ttlMs`) across processes, so the D-011 rule "a call
+  must follow a listing inspected in this process" can't be assumed to hold.
+- Streamable HTTP: `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers are
+  required and must match the body (else 400 + -32020); `x-mcp-header` mirrors tool
+  parameters into `Mcp-Param-{Name}` with a `=?base64?…?=` sentinel encoding; no sessions,
+  no GET stream, no resumability; `subscriptions/listen` replaces both.
+- `ttlMs` and `cacheScope` are required on `server/discover`, `*/list` and
+  `resources/read` results. `cacheScope: public` lets shared intermediaries reuse a
+  response across authorization contexts.
+- `serverInfo`/`clientInfo` are self-reported and "SHOULD NOT" drive security decisions;
+  tool annotations are untrusted unless the server is trusted.
+The SDK used for interop tests (`mcp` 2.3.0, already the pinned dev dependency) implements
+this revision on stdio and Streamable HTTP, with a dual-era `mode="auto"` client that probes
+`server/discover` and falls back to `initialize` on any error except a disjoint -32022
+(`mcp/client/_probe.py`).
