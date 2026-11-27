@@ -543,6 +543,29 @@ async def test_mrtr_approval_state_is_bound_to_the_arguments(tmp_path: Path) -> 
     assert h.events("approval.denied")
 
 
+async def test_mrtr_approval_state_is_bound_to_the_server(tmp_path: Path) -> None:
+    # Every gatehouse process on the install signs with the same key. A state issued by
+    # the gatehouse in front of "srv" must not approve the same call elsewhere.
+    policy = APPROVE_SEND + "  other:\n    tools:\n      send_email: require_approval\n"
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    first = make_harness(tmp_path / "a", policy)
+    _, state = await _approval_prompt(first, {"to": "a@example.com"})
+    second = make_harness(tmp_path / "b", policy, server_name="other")
+    await second.modern_list_tools([tool_def("send_email")])
+    answer = {APPROVAL_KEY: {"action": "accept", "content": {"approve": True}}}
+    await _modern_call(
+        second,
+        "send_email",
+        {"to": "a@example.com"},
+        caps=ELICIT,
+        inputResponses=answer,
+        requestState=state,
+    )
+    assert not _forwarded_calls(second)
+    assert second.events("approval.denied")
+
+
 async def test_mrtr_declined_approval_blocks(tmp_path: Path) -> None:
     h = make_harness(tmp_path, APPROVE_SEND)
     args = {"to": "a@example.com"}

@@ -145,11 +145,13 @@ def test_unknown_input_request_method_is_flagged() -> None:
 
 def test_state_signer_round_trip_and_binding() -> None:
     signer = StateSigner(b"k" * 32)
-    binding = call_binding("tools/call", "send", "fp")
+    binding = call_binding("github", "tools/call", "send", "fp")
     token = signer.issue(binding)
     assert token.startswith(STATE_PREFIX)
     assert signer.verify(token, binding) is not None
-    assert signer.verify(token, call_binding("tools/call", "send", "other")) is None
+    assert signer.verify(token, call_binding("github", "tools/call", "send", "other")) is None
+    # The same call on another server's gatehouse (same install key) is not approved.
+    assert signer.verify(token, call_binding("slack", "tools/call", "send", "fp")) is None
     assert StateSigner(b"x" * 32).verify(token, binding) is None  # other install key
 
 

@@ -96,8 +96,12 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
 
 
-def call_binding(method: str, tool: str, args_fingerprint: str) -> str:
-    return hashlib.sha256(f"{method}\x00{tool}\x00{args_fingerprint}".encode()).hexdigest()
+def call_binding(server: str, method: str, tool: str, args_fingerprint: str) -> str:
+    """What an approval state is bound to. The install key is shared by every gatehouse
+    process on the machine, so the server name is part of the binding: a state issued
+    for one server's tool must not approve the same call on another server."""
+    parts = (server, method, tool, args_fingerprint)
+    return hashlib.sha256("\x00".join(parts).encode()).hexdigest()
 
 
 @dataclass(frozen=True)

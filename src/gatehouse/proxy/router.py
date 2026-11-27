@@ -698,7 +698,9 @@ class Router:
         if ours:
             assert isinstance(state, str)
             signer = self.cfg.state_signer
-            binding = call_binding(TOOLS_CALL, call.name, self._args_fp(call.args))
+            binding = call_binding(
+                self.cfg.server_name, TOOLS_CALL, call.name, self._args_fp(call.args)
+            )
             verified = signer.verify(state, binding) if signer is not None else None
             if verified is None:
                 call.approval, call.approval_note = (
@@ -727,7 +729,7 @@ class Router:
             call.answer_findings = self._answer_findings(responses)
 
     def _grant_key(self, call: _Call) -> str:
-        return call_binding(TOOLS_CALL, call.name, self._args_fp(call.args))
+        return call_binding(self.cfg.server_name, TOOLS_CALL, call.name, self._args_fp(call.args))
 
     def _use_grant(self, call: _Call) -> bool:
         key = self._grant_key(call)
