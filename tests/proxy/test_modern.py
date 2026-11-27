@@ -79,8 +79,17 @@ async def test_eras_cannot_be_mixed_on_one_connection(tmp_path: Path) -> None:
     h2 = make_harness(tmp_path / "b", ALLOW_ALL_TOFU)
     rid = await h2.modern_request("tools/list")
     await h2.server(_result(rid, tools=[]))
-    await h2.initialize()
-    assert h2.to_client[-1]["error"]["code"] == -32600
+    await h2.client(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {}},
+        }
+    )
+    err = h2.to_client[-1]["error"]
+    assert err["code"] == -32022 and err["data"]["supported"] == [MODERN]
+    assert not h2.forwarded("initialize")
 
 
 async def test_modern_request_after_modern_without_meta_is_rejected(tmp_path: Path) -> None:
@@ -105,6 +114,31 @@ async def test_client_info_from_meta_lands_in_events(tmp_path: Path) -> None:
     assert listed["ClientName"] == "test-client"
     assert listed["ProtocolVersion"] == MODERN
     assert listed["UpstreamName"] == "upstream"
+
+
+async def test_pipelined_initialize_does_not_lock_a_modern_connection(tmp_path: Path) -> None:
+    # Claude Code 2.1.332 sends server/discover and initialize back to back. The server
+    # answers discover and refuses the handshake with -32022; the client continues in
+    # 2026-07-28. gatehouse must not latch the legacy era on the refused handshake.
+    h = make_harness(tmp_path, ALLOW_ALL_TOFU)
+    probe = await h.modern_request("server/discover")
+    init: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": 0,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {}},
+    }
+    await h.client(init)
+    assert h.forwarded("initialize")  # era not known yet: the server decides
+    await h.server(
+        _result(probe, supportedVersions=[MODERN], capabilities={}, ttlMs=0, cacheScope="public")
+    )
+    refusal = {"code": -32022, "message": "modern", "data": {"supported": [MODERN]}}
+    await h.server({"jsonrpc": "2.0", "id": 0, "error": refusal})
+    assert h.to_client[-1]["error"]["code"] == -32022
+    result = await h.modern_list_tools([tool_def("a")])
+    assert [t["name"] for t in result["tools"]] == ["a"]
+    assert not h.events("protocol.era_conflict")
 
 
 # ---------------------------------------------------------------------- discover

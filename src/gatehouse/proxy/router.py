@@ -382,6 +382,8 @@ class Router:
             if meta.present and meta.version not in MODERN_VERSIONS:
                 await self._unsupported_version(frame, meta.version)
                 return
+            if meta.present:
+                self._note_client(meta)
             self.client_pending[frame.id_key] = Pending(
                 DISCOVER,
                 frame.id_key,
@@ -394,8 +396,28 @@ class Router:
 
         if method == INITIALIZE:
             if self.session.era is Era.MODERN:
-                await self._era_conflict(
-                    frame, "initialize on a connection already using 2026-07-28 requests"
+                # A dual-era client may pipeline initialize with its server/discover probe
+                # (Claude Code 2.1.332 does). Answer as a 2026-07-28 server does: -32022
+                # naming the modern versions, which such a client takes as modern evidence.
+                self.emit.emit(
+                    EventType.PROTOCOL_ERA_CONFLICT,
+                    severity=Severity.LOW,
+                    action=EventAction.BLOCKED,
+                    direction=_C2S,
+                    method=INITIALIZE,
+                    request_id=frame.id_key,
+                    reason="initialize on a connection already serving 2026-07-28",
+                    details={"Era": Era.MODERN.value},
+                )
+                await self._reply_error(
+                    frame.id,
+                    UNSUPPORTED_PROTOCOL_VERSION,
+                    "connection is serving the 2026-07-28 protocol; "
+                    "the initialize handshake is not accepted",
+                    {
+                        "supported": list(MODERN_VERSIONS),
+                        "requested": as_str(params.get("protocolVersion")),
+                    },
                 )
                 return
             if self.session.downgrade_blocked:
@@ -419,7 +441,8 @@ class Router:
                     },
                 )
                 return
-            self.session.era = Era.LEGACY
+            # The era latches to legacy when the handshake *succeeds* (_initialize_result):
+            # a pipelined initialize that the server refuses must not lock the connection.
             self.session.client_capabilities = as_obj(params.get("capabilities")) or {}
             self.session.requested_version = as_str(params.get("protocolVersion"))
             info = as_obj(params.get("clientInfo")) or {}
@@ -1108,7 +1131,7 @@ class Router:
 
         if pending.method == DISCOVER:
             if result is not None:
-                await self._discover_result(frame, result)
+                await self._discover_result(frame, result, pending)
             else:
                 await self._discover_failed(frame)
         elif pending.method == INITIALIZE and result is not None:
@@ -1285,7 +1308,9 @@ class Router:
             self.session.downgrade_blocked = True
         return refuse
 
-    async def _discover_result(self, frame: Frame, result: dict[str, Any]) -> None:
+    async def _discover_result(
+        self, frame: Frame, result: dict[str, Any], pending: Pending
+    ) -> None:
         new = dict(result)
         modified = False
         raw_versions = as_list(result.get("supportedVersions")) or []
@@ -1300,6 +1325,10 @@ class Router:
             self._downgrade(finding)
         else:
             self._record_versions(offered_modern)
+            # A successful modern probe opens a 2026-07-28 connection, as it does at the
+            # server (the opening request decides the era).
+            if pending.version in offered_modern and self.session.era is None:
+                self.session.era = Era.MODERN
 
         instructions = as_str(result.get("instructions"))
         if instructions:
@@ -1374,6 +1403,18 @@ class Router:
                 {"supported": [pending.requested_version], "requested": version},
             )
             return
+        if self.session.era is Era.MODERN:
+            # The server accepted a handshake on a connection that is already serving
+            # 2026-07-28 requests: two eras at once is not something gatehouse inspects.
+            self._invalid_result(pending, "initialize succeeded on a 2026-07-28 connection")
+            await self._reply_error(
+                frame.id,
+                UNSUPPORTED_PROTOCOL_VERSION,
+                "connection is serving the 2026-07-28 protocol",
+                {"supported": list(MODERN_VERSIONS), "requested": pending.requested_version},
+            )
+            return
+        self.session.era = Era.LEGACY
         self._record_versions((version,))
         self.session.negotiated_version = version
         self.emit.context.protocol_version = version
