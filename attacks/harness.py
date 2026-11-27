@@ -21,10 +21,20 @@ import yaml
 
 from attacks.targets import EVAL_POLICY, RunPaths, Target, server_command
 from gatehouse.client import ClientError, StdioClient
+from gatehouse.jsonutil import as_obj
 
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
-MILESTONES = ("mvp", "m2", "m3", "bypass")
-PREDICATES = ("client_saw_tool", "client_saw_result", "server_received", "server_received_raw")
+MILESTONES = ("mvp", "m2", "m3", "m4", "bypass")
+PREDICATES = (
+    "client_saw_tool",
+    "client_saw_result",
+    "server_received",
+    "server_received_raw",
+    "client_saw_input_request",
+    "client_fell_back",
+    "client_saw_discover",
+)
+ERAS = ("legacy", "modern", "auto")
 
 
 class ScenarioError(ValueError):
@@ -51,6 +61,13 @@ class Scenario:
     owasp: list[str] = field(default_factory=list[str])
     atlas: list[str] = field(default_factory=list[str])
     source: str = ""
+    # Protocol era the scenario's client speaks: legacy (initialize), modern (2026-07-28
+    # _meta on every request) or auto (probe server/discover, fall back to initialize).
+    era: str = "legacy"
+    client_capabilities: dict[str, Any] = field(default_factory=dict[str, Any])
+    # What the simulated user types into any form a server shows: every string field gets
+    # this value (booleans stay false, so gatehouse's own approval prompts are declined).
+    user_answer: str | None = None
 
     @property
     def benign(self) -> bool:
@@ -87,11 +104,16 @@ def _scenario(raw: Mapping[str, Any], source: str) -> Scenario:
             owasp=_strs(raw.get("owasp")),
             atlas=_strs(raw.get("atlas")),
             source=source,
+            era=str(raw.get("era", "legacy")),
+            client_capabilities=dict(raw.get("client_capabilities") or {}),
+            user_answer=str(raw["user_answer"]) if "user_answer" in raw else None,
         )
     except (KeyError, TypeError) as exc:
         raise ScenarioError(f"{source}: scenario {sid}: missing/invalid field {exc}") from None
     if sc.milestone not in MILESTONES:
         raise ScenarioError(f"{source}: {sid}: unknown milestone {sc.milestone!r}")
+    if sc.era not in ERAS:
+        raise ScenarioError(f"{source}: {sid}: era must be one of {ERAS}")
     if sc.expect not in ("attack", "benign"):
         raise ScenarioError(f"{source}: {sid}: expect must be attack or benign")
     if not sc.benign:
@@ -132,6 +154,9 @@ class Observation:
     duration_s: float = 0.0
     markers_stripped: int = 0
     stderr_alerts: list[str] = field(default_factory=list[str])
+    eras: list[str | None] = field(default_factory=list[str | None])  # per phase
+    input_requests: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    discovered: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
 
 def strip_result_marker(calls: list[dict[str, Any]], marker: str) -> int:
@@ -166,8 +191,61 @@ def _substitute(value: Any, mapping: Mapping[str, str]) -> Any:
     return value
 
 
+def _fill_form(params: Mapping[str, Any], answer: str | None) -> dict[str, Any]:
+    """The simulated user's answer to an elicitation form."""
+    if answer is None:
+        return {"action": "decline"}
+    schema = cast(dict[str, Any], params.get("requestedSchema") or {})
+    props = cast(dict[str, Any], schema.get("properties") or {})
+    content: dict[str, Any] = {}
+    for key, prop in props.items():
+        kind = cast(dict[str, Any], prop).get("type") if isinstance(prop, dict) else None
+        content[key] = False if kind == "boolean" else answer
+    return {"action": "accept", "content": content}
+
+
+class SimulatedUser:
+    """Answers forms the way a user who trusts what the client shows would."""
+
+    def __init__(self, sc: Scenario, obs: Observation) -> None:
+        self.answer = sc.user_answer
+        self.obs = obs
+
+    def server_request(self, frame: dict[str, Any]) -> dict[str, Any] | None:
+        if frame.get("method") != "elicitation/create":
+            return None
+        params = cast(dict[str, Any], frame.get("params") or {})
+        self.obs.input_requests.append({"method": "elicitation/create", "params": params})
+        return _fill_form(params, self.answer)
+
+    def input_required(self, result: dict[str, Any]) -> dict[str, Any] | None:
+        requests = cast(dict[str, Any], result.get("inputRequests") or {})
+        answers: dict[str, Any] = {}
+        for key, req in requests.items():
+            r = cast(dict[str, Any], req) if isinstance(req, dict) else {}
+            self.obs.input_requests.append(r)
+            if r.get("method") == "elicitation/create":
+                answers[key] = _fill_form(cast(dict[str, Any], r.get("params") or {}), self.answer)
+            elif r.get("method") == "roots/list":
+                answers[key] = {"roots": []}
+        return answers if answers else None
+
+
+def _resync(client: StdioClient) -> None:
+    """Once this answer arrives, everything sent before it was handled. 2026-07-28 has no
+    ping, so modern clients use server/discover."""
+    if client.era == "modern":
+        client.request("server/discover", {}, timeout=10)
+    else:
+        client.request("ping", {}, timeout=10)
+
+
 def _run_steps(
-    client: StdioClient, steps: list[Any], obs: Observation, subst: Mapping[str, str]
+    client: StdioClient,
+    steps: list[Any],
+    obs: Observation,
+    subst: Mapping[str, str],
+    user: SimulatedUser,
 ) -> None:
     for step in steps:
         if step == "list":
@@ -183,17 +261,16 @@ def _run_steps(
             tool = str(call["tool"])
             args = _substitute(call.get("arguments") or {}, subst)
             try:
-                resp = client.call_tool(tool, args)
+                resp = client.call_tool(tool, args, on_input=user.input_required)
             except ClientError as exc:
                 resp = {"error": {"code": None, "message": str(exc)}}
             obs.calls.append({"tool": tool, "arguments": args, "response": resp})
         elif "raw" in s:
             client.send_raw(str(_substitute(s["raw"], subst)).encode("utf-8") + b"\n")
-            # Resync: once the ping answer arrives, everything sent before it was handled.
             try:
-                client.request("ping", {}, timeout=10)
+                _resync(client)
             except ClientError as exc:
-                obs.errors.append(f"ping after raw: {exc}")
+                obs.errors.append(f"resync after raw: {exc}")
         else:
             raise ScenarioError(f"unknown step {step!r}")
 
@@ -223,10 +300,23 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
             spec = {"name": sc.id.split(".")[0], **phase.server}
             spec_path.write_text(json.dumps(spec), encoding="utf-8")
             argv = target.argv("srv", server_command(), rp)
-            client = StdioClient(argv, env={**env, "ATTACK_SPEC": str(spec_path)}, timeout=20)
+            user = SimulatedUser(sc, obs)
+            client = StdioClient(
+                argv,
+                env={**env, "ATTACK_SPEC": str(spec_path)},
+                timeout=20,
+                on_server_request=user.server_request,
+            )
             try:
-                client.initialize(client_name="gatehouse-attack-suite")
-                _run_steps(client, phase.steps, obs, subst)
+                try:
+                    hello = client.connect(
+                        sc.era, sc.client_capabilities, client_name="gatehouse-attack-suite"
+                    )
+                    if client.era == "modern":
+                        obs.discovered.append(hello)
+                finally:
+                    obs.eras.append(client.era)
+                _run_steps(client, phase.steps, obs, subst, user)
             except ClientError as exc:
                 obs.errors.append(f"phase {index}: {exc}")
             finally:
@@ -299,6 +389,13 @@ def attack_succeeded(sc: Scenario, obs: Observation) -> bool:
     if kind == "server_received_raw":
         assert needle is not None
         return any(needle in line for line in obs.server_frames)
+    if kind == "client_saw_input_request":
+        return any(needle is None or needle in _dump(r) for r in obs.input_requests)
+    if kind == "client_fell_back":
+        # an auto-mode client ended up on the legacy handshake in some phase
+        return "legacy" in obs.eras
+    if kind == "client_saw_discover":
+        return any(needle is None or needle in _dump(d) for d in obs.discovered)
     raise ScenarioError(f"unknown predicate {kind}")
 
 
@@ -335,6 +432,9 @@ def benign_interference(sc: Scenario, obs: Observation) -> list[str]:
                     continue
                 expected = _expected_result(phase.server, c["tool"])
                 got = c["response"].get("result")
+                body = as_obj(got)
+                if body is not None and body.get("resultType") == "complete":
+                    got = {k: v for k, v in body.items() if k != "resultType"}  # modern era
                 if got != expected:
                     err = cast(dict[str, Any], c["response"].get("error") or {})
                     problems.append(f"call {c['tool']} altered/blocked: {err.get('message', '')}")
@@ -348,6 +448,12 @@ _ALERT_EVENTS = (
     "protocol.batch_rejected",
     "protocol.oversized_frame",
     "protocol.unsolicited_response",
+    "protocol.unsupported_version",
+    "protocol.invalid_meta",
+    "protocol.era_conflict",
+    "protocol.invalid_result",
+    "protocol.header_mismatch",
+    "protocol.unsolicited_notification",
     "policy.tampered",
     "policy.load_failed",
 )
