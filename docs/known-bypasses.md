@@ -51,7 +51,7 @@ of blocking it. Per-rule overrides would be the proper fix.
 | Not inspected yet | Status |
 |---|---|
 | `resources/*` and `prompts/*` content | Forwarded unchanged; inspection planned. Sampling and elicitation requests (legacy server requests and 2026-07-28 MRTR input requests) are inspected since v0.2.0-alpha (D-036). |
-| Streamable HTTP transport | M4. Only stdio is proxied today. |
+| Streamable HTTP transport | `gatehouse serve` since v0.2.0-alpha (D-039). Not offered: the legacy GET stream for server-initiated messages, and approval prompts for legacy clients (blocked instead). With several concurrent clients, an event can carry another request's client name. |
 | 2026-07-28 era | Inspected on stdio since v0.2.0-alpha (D-036). A gatehouse-run listing before a stateless call adds one upstream round trip. A modern client without the elicitation capability can't approve calls, so they are blocked. |
 | Server-sent elicitation that imitates gatehouse | **Partly closed in v0.2.0-alpha.** Elicitations that mention gatehouse, and MRTR results with a `requestState` shaped like gatehouse's, are withheld. A prompt that imitates the *layout* of gatehouse's message without naming it still reaches the user. A per-install phrase in gatehouse prompts would close it. |
 

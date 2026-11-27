@@ -3,6 +3,7 @@
     python -m attacks run --target gatehouse --out reports/gatehouse [--only ID ...]
     python -m attacks run --target direct --out reports/direct
     python -m attacks canary-check reports/gatehouse
+    python -m attacks http --target gatehouse --out reports/gatehouse-http
 
 ``run`` writes report.json, report.md, and the raw evidence (gatehouse events and stderr
 per scenario) under --out. ``run`` exits 1 if the direct baseline shows a broken scenario
@@ -113,7 +114,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--summary", action="store_true", help="also print report.md to stderr")
     c = sub.add_parser("canary-check")
     c.add_argument("dir", type=Path)
+    h = sub.add_parser("http", help="Streamable HTTP scenarios (attacks/http_scenarios.yaml)")
+    h.add_argument("--target", choices=("direct", "gatehouse"), default="gatehouse")
+    h.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
+    if args.cmd == "http":
+        from attacks.http_suite import run as run_http
+
+        return run_http(args.target, args.out)
     return cmd_run(args) if args.cmd == "run" else cmd_canary_check(args)
 
 

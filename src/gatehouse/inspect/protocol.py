@@ -86,7 +86,7 @@ def _downgrade(rule: str, summary: str) -> Finding:
 _TCHAR = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}")
 _PRIMITIVE = frozenset({"string", "integer", "boolean"})
 _SENSITIVE = re.compile(
-    r"(?:pass(?:word|wd|phrase|code)?|secret|token|api[_-]?key|apikey|credential|"
+    r"(?:pass(?:word|wd|phrase|code)?|secret|token|api[_-]?key|apikey|access[_-]?key|credential|"
     r"private[_-]?key|session|cookie|auth(?:orization)?|ssn|card)",
     re.IGNORECASE,
 )

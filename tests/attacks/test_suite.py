@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -116,3 +117,15 @@ def test_competitor_patterns_are_clean_and_match() -> None:
     assert alert is not None
     panel = "| CRITICAL [CMD-INJECT] upstream | LOW [ENTROPY] Unusual JSON nesting depth"
     assert re.findall(alert, panel) == ["CRITICAL [CMD-INJECT]"]
+
+
+@pytest.mark.parametrize("target", ["direct", "gatehouse"])
+def test_http_scenarios(tmp_path: Path, target: str) -> None:
+    """Every HTTP attack works without a proxy and is prevented by gatehouse (D-039)."""
+    assert attacks_main(["http", "--target", target, "--out", str(tmp_path)]) == 0
+    report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
+    outcomes = {r["id"]: r["outcome"] for r in report["results"]}
+    attacks = [k for k in outcomes if ".benign." not in k]
+    expected = "missed" if target == "direct" else "prevented"
+    assert attacks and all(outcomes[k] == expected for k in attacks)
+    assert all(v == "pass" for k, v in outcomes.items() if ".benign." in k)

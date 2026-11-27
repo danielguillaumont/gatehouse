@@ -434,6 +434,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+http = [
+    { name = "httpx2" },
+    { name = "uvicorn" },
+]
 sentinel = [
     { name = "azure-identity" },
     { name = "azure-monitor-ingestion" },
@@ -456,11 +460,13 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.4,<5" },
     { name = "azure-identity", marker = "extra == 'sentinel'", specifier = ">=1.17,<2" },
     { name = "azure-monitor-ingestion", marker = "extra == 'sentinel'", specifier = ">=1.0.4,<2" },
+    { name = "httpx2", marker = "extra == 'http'", specifier = ">=2.16,<3" },
     { name = "psutil", specifier = ">=6,<8" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "pyyaml", specifier = ">=6.0.1,<7" },
+    { name = "uvicorn", marker = "extra == 'http'", specifier = ">=0.34,<1" },
 ]
-provides-extras = ["sentinel"]
+provides-extras = ["http", "sentinel"]
 
 [package.metadata.requires-dev]
 dev = [

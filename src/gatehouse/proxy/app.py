@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import anyio
 
@@ -165,6 +166,67 @@ def run(opts: RunOptions) -> int:
             reason=f"cannot start upstream server: {exc}",
         )
         return 127
+    finally:
+        emitter.emit(EventType.SESSION_ENDED, details={"ReturnCode": rc})
+        emitter.close()
+
+
+@dataclass
+class ServeOptions:
+    upstream: str
+    host: str = "127.0.0.1"
+    port: int = 8848
+    path: str = "/mcp"
+    allowed_origins: frozenset[str] = frozenset()
+    allowed_hosts: frozenset[str] = frozenset()
+    upstream_headers: dict[str, str] = field(default_factory=dict[str, str])
+    request_timeout: float = 300.0
+
+
+def build_http_app(opts: RunOptions, serve_opts: ServeOptions) -> tuple[Any, Emitter]:
+    """The ASGI app for ``gatehouse serve`` (needs the http extra)."""
+    from gatehouse.proxy.http import HttpProxy, HttpProxyConfig
+
+    config, emitter = prepare(opts)
+    config.http = True
+    proxy = HttpProxy(
+        HttpProxyConfig(
+            upstream=serve_opts.upstream,
+            path=serve_opts.path,
+            allowed_origins=serve_opts.allowed_origins,
+            allowed_hosts=serve_opts.allowed_hosts,
+            upstream_headers=dict(serve_opts.upstream_headers),
+            max_body_bytes=opts.max_frame_bytes,
+            request_timeout=serve_opts.request_timeout,
+        ),
+        config,
+        emitter,
+    )
+    return proxy, emitter
+
+
+def serve(opts: RunOptions, serve_opts: ServeOptions) -> int:
+    import uvicorn
+
+    app, emitter = build_http_app(opts, serve_opts)
+    # access_log off and no log_config: uvicorn's defaults would log to stdout and could
+    # write request URLs; gatehouse's own events are the audit trail.
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=serve_opts.host,
+            port=serve_opts.port,
+            access_log=False,
+            log_config=None,
+            lifespan="on",
+            server_header=False,
+        )
+    )
+    rc = 1
+    try:
+        server.run()
+        rc = 0
+        return rc
     finally:
         emitter.emit(EventType.SESSION_ENDED, details={"ReturnCode": rc})
         emitter.close()

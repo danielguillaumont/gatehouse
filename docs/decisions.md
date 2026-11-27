@@ -395,3 +395,58 @@ back to a bounded check that enumerates the generated schema's actions against
 representative contexts, and says so in its output. Alternatives: cedar-python's
 `cedar.lean` (shells out to Lean + cvc5 as well, and is 3.12+), or a small Rust prover on
 `cedar-policy-symcc` (more code to maintain).
+
+**D-039 (2026-11-27) Streamable HTTP: a raw ASGI reverse proxy that rebuilds upstream
+headers from the inspected body.** `gatehouse serve --upstream URL` puts the same router
+in front of a Streamable HTTP server. Design:
+- **One channel per POST, one shared session per era.** Each downstream POST gets its
+  own `Router` with its own pending-request map, so subscription notifications and MRTR
+  results are matched to the request that opened them. All 2026-07-28 requests share
+  one `Session`, so a listing inspected on one request governs calls on the next.
+  Legacy clients get one `Session` per `Mcp-Session-Id`. That id is issued by gatehouse
+  and mapped to the upstream's own id, so upstream ids never leave gatehouse and can't be
+  guessed downstream. An unknown id gets 404, a missing one 400, as the spec requires.
+- **Header/body consistency on ingress.** A 2026-07-28 request whose
+  `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` or `Mcp-Param-*` headers disagree with
+  the body gets 400 / -32020 and `protocol.header_mismatch` before the router sees it.
+  So does a duplicated routing header. Rule order and value comparison (including the
+  `=?base64?…?=` sentinel and numeric comparison of integer parameters) follow the
+  spec and SDK 2.3.0's `mcp/shared/inbound.py`, so a conforming client gets the same
+  answer from gatehouse as from a conforming server.
+- **Headers are rebuilt upstream, never forwarded.** gatehouse computes the upstream
+  routing headers from the body it actually sends, using the tool definition it
+  inspected for `Mcp-Param-*`. The client's `Authorization`, cookies and every other
+  header are dropped, except `traceparent` and `tracestate`. Upstream credentials come
+  from gatehouse's own configuration (`--upstream-bearer-env`). The authorization spec
+  forbids token passthrough, so there is no option to forward the client's token.
+- **x-mcp-header is enforced in HTTP mode.** An invalid annotation (CR/LF or a separator
+  in the name, a duplicate, a non-primitive type, unreachable through `properties`)
+  removes the tool from the listing, as the spec requires of HTTP clients. On stdio it
+  is reported at LOW, since stdio clients may ignore the annotation. A parameter that
+  looks sensitive and is mirrored into a header is reported at MEDIUM: every
+  intermediary and access log sees headers.
+- **Transport hygiene.** It listens on loopback by default (`--allow-remote` to change
+  that). A foreign `Origin` gets 403 and a foreign `Host` gets 421, against DNS
+  rebinding. Bodies and SSE events are size-bounded. Batches are rejected. GET gets 405,
+  since 2026-07-28 has no GET stream and 405 is the allowed answer for legacy servers
+  that offer none. uvicorn's access log is off: it would write request lines to stdout,
+  and gatehouse's events are the audit trail.
+- **Downstream framing mirrors upstream.** If the upstream streams (SSE), so does
+  gatehouse, frame by frame after inspection. Single responses, and anything gatehouse
+  answers itself, go back as JSON with the status the spec assigns to each error code.
+- **Legacy approval prompts are off over HTTP.** The user's answer to a gatehouse
+  `elicitation/create` would arrive on another POST, so legacy `require_approval` calls
+  are blocked. 2026-07-28 clients approve through MRTR (D-036), which works over HTTP.
+- **Raw ASGI and httpx2, not Starlette and httpx.** The plan named Starlette. The proxy
+  needs one task group that spans the upstream exchange and the downstream response
+  (JSON or SSE, decided by the first upstream frame), which plain ASGI expresses
+  directly. Starlette's response classes would have had to be worked around. httpx
+  0.29.0 was uploaded on 2026-11-26, too recently to adopt. `httpx2` (pydantic/httpx2)
+  is the maintained fork the MCP SDK 2.3.0 itself depends on, so the dev lock already
+  tests it. The `gatehouse[http]` extra is `httpx2` + `uvicorn`.
+Known limits: the event context (client name, protocol version) is shared across
+concurrent requests, so with several clients at once an event can carry another
+request's client name. Server-initiated legacy streams (GET) are not offered.
+Alternatives considered: forwarding the client's headers and only validating them
+(rejected: one parser difference away from smuggling); terminating MCP and re-issuing
+requests through the SDK client (rejected: violates message-level proxying).

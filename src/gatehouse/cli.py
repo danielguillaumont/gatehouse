@@ -1,13 +1,15 @@
 """gatehouse command line.
 
     gatehouse run --name NAME --policy FILE [options] -- <server command...>
+    gatehouse serve --name NAME --policy FILE --upstream URL [options]
     gatehouse pin --name NAME [--pins FILE] -- <server command...>
     gatehouse diff --name NAME [--pins FILE] -- <server command...>
     gatehouse validate-policy FILE
     gatehouse policy-hash FILE
     gatehouse table-schema
 
-Only ``run`` speaks MCP on stdout; the other commands print human output.
+Only ``run`` speaks MCP on stdout; ``serve`` speaks MCP over HTTP; the other commands
+print human output.
 """
 
 from __future__ import annotations
@@ -39,43 +41,74 @@ def _split_command(argv: Sequence[str]) -> tuple[list[str], list[str]]:
     return args, []
 
 
-def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="gatehouse", description="Security gateway for MCP.")
-    p.add_argument("--version", action="version", version=f"gatehouse {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    run = sub.add_parser("run", help="proxy one stdio MCP server (put the server command after --)")
-    run.add_argument("--name", required=True, help="server name used in policy and events")
-    run.add_argument("--policy", required=True, type=Path)
-    run.add_argument("--pins", type=Path, default=None, help="pin store (default: state dir)")
-    run.add_argument("--events-dir", type=Path, default=None, help="JSONL event directory")
-    run.add_argument("--no-event-log", action="store_true", help="do not write JSONL events")
-    run.add_argument("--quiet", action="store_true", help="no human-readable events on stderr")
-    run.add_argument("--expect-policy-sha256", default=None)
-    run.add_argument("--max-frame-bytes", type=int, default=DEFAULT_MAX_FRAME_BYTES)
-    run.add_argument(
+def _add_common(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--name", required=True, help="server name used in policy and events")
+    sp.add_argument("--policy", required=True, type=Path)
+    sp.add_argument("--pins", type=Path, default=None, help="pin store (default: state dir)")
+    sp.add_argument("--events-dir", type=Path, default=None, help="JSONL event directory")
+    sp.add_argument("--no-event-log", action="store_true", help="do not write JSONL events")
+    sp.add_argument("--quiet", action="store_true", help="no human-readable events on stderr")
+    sp.add_argument("--expect-policy-sha256", default=None)
+    sp.add_argument("--max-frame-bytes", type=int, default=DEFAULT_MAX_FRAME_BYTES)
+    sp.add_argument(
         "--approval-timeout",
         type=float,
         default=120.0,
         help="seconds to wait for the user to approve a require_approval call through "
         "MCP elicitation (0 disables approval prompts: such calls are blocked)",
     )
-    run.add_argument(
+    sp.add_argument(
         "--sentinel-endpoint",
         default=None,
         help="Logs Ingestion endpoint (DCE) to send events to Microsoft Sentinel; "
         "default: $GATEHOUSE_SENTINEL_ENDPOINT. Needs gatehouse[sentinel].",
     )
-    run.add_argument(
+    sp.add_argument(
         "--sentinel-dcr-id",
         default=None,
         help="immutable id of the data collection rule; default: $GATEHOUSE_SENTINEL_DCR_ID",
     )
-    run.add_argument(
+    sp.add_argument(
         "--sentinel-stream",
         default=None,
         help="DCR stream name; default: $GATEHOUSE_SENTINEL_STREAM or Custom-GatehouseEvents_CL",
     )
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="gatehouse", description="Security gateway for MCP.")
+    p.add_argument("--version", action="version", version=f"gatehouse {__version__}")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    run = sub.add_parser("run", help="proxy one stdio MCP server (put the server command after --)")
+    _add_common(run)
+    serve = sub.add_parser(
+        "serve", help="proxy one Streamable HTTP MCP server (needs gatehouse[http])"
+    )
+    _add_common(serve)
+    serve.add_argument("--upstream", required=True, help="upstream MCP endpoint URL")
+    serve.add_argument("--host", default="127.0.0.1", help="listen address (default loopback)")
+    serve.add_argument("--port", type=int, default=8848)
+    serve.add_argument("--path", default="/mcp", help="endpoint path clients POST to")
+    serve.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="allow listening on a non-loopback address (put TLS and auth in front)",
+    )
+    serve.add_argument(
+        "--allow-origin", action="append", default=[], help="extra allowed Origin (repeatable)"
+    )
+    serve.add_argument(
+        "--allow-host", action="append", default=[], help="extra allowed Host (repeatable)"
+    )
+    serve.add_argument(
+        "--upstream-bearer-env",
+        default=None,
+        metavar="VAR",
+        help="send 'Authorization: Bearer $VAR' upstream. The client's own credentials "
+        "are never forwarded (no token passthrough).",
+    )
+    serve.add_argument("--request-timeout", type=float, default=300.0)
 
     for name, helptext in (
         ("pin", "approve (pin) the current tool definitions of a server"),
@@ -102,6 +135,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "run":
         return _cmd_run(args, command)
+    if args.cmd == "serve":
+        return _cmd_serve(args)
     if args.cmd in ("pin", "diff"):
         if not command:
             _err(f"gatehouse {args.cmd}: give the server command after --")
@@ -150,6 +185,68 @@ def _cmd_run(args: argparse.Namespace, command: list[str]) -> int:
         sentinel=sentinel,
     )
     return run(opts)
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import ipaddress
+    import os
+    from urllib.parse import urlsplit
+
+    upstream = urlsplit(str(args.upstream))
+    if upstream.scheme not in ("http", "https") or not upstream.hostname:
+        _err("gatehouse serve: --upstream must be an http(s) URL")
+        return 2
+    host = args.host.strip("[]")
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    if not loopback and not args.allow_remote:
+        _err(
+            f"gatehouse serve: refusing to listen on {args.host} (not loopback); "
+            "pass --allow-remote and put TLS and authentication in front"
+        )
+        return 2
+    upstream_headers: dict[str, str] = {}
+    if args.upstream_bearer_env:
+        token = os.environ.get(args.upstream_bearer_env)
+        if not token:
+            _err(f"gatehouse serve: ${args.upstream_bearer_env} is not set")
+            return 2
+        upstream_headers["Authorization"] = f"Bearer {token}"
+    try:
+        sentinel = _sentinel_config(args)
+        from gatehouse.proxy.app import RunOptions, ServeOptions, serve
+    except ValueError as exc:
+        _err(f"gatehouse: {exc}")
+        return 2
+    except ImportError as exc:
+        _err(f"gatehouse serve needs the http extra: pip install 'gatehouse[http]' ({exc})")
+        return 2
+    opts = RunOptions(
+        server_name=args.name,
+        policy_path=args.policy,
+        # never log the full URL: it may carry credentials in the path or query
+        command=[f"{upstream.scheme}://{upstream.hostname}"],
+        pins_path=args.pins or paths.default_pins_path(),
+        events_dir=None if args.no_event_log else (args.events_dir or paths.default_events_dir()),
+        expect_policy_sha256=args.expect_policy_sha256,
+        max_frame_bytes=args.max_frame_bytes,
+        stderr_events=not args.quiet,
+        approval_timeout=args.approval_timeout,
+        sentinel=sentinel,
+    )
+    serve_opts = ServeOptions(
+        upstream=args.upstream,
+        host=args.host,
+        port=args.port,
+        path=args.path,
+        allowed_origins=frozenset(args.allow_origin),
+        allowed_hosts=frozenset(args.allow_host),
+        upstream_headers=upstream_headers,
+        request_timeout=args.request_timeout,
+    )
+    return serve(opts, serve_opts)
 
 
 def _sentinel_config(args: argparse.Namespace) -> SentinelConfig | None:

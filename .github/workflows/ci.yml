@@ -22,7 +22,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run pyright
@@ -43,7 +43,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python }}
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - run: uv run pytest -q
 
   attack-suite:
@@ -53,7 +53,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - name: Baseline (no proxy) - every attack must work, otherwise a scenario is broken
         run: uv run python -m attacks run --target direct --out reports/direct
       - name: Attack suite through gatehouse
@@ -63,6 +63,10 @@ jobs:
         run: cat reports/gatehouse/report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Canary check (no secret reaches events or stderr)
         run: uv run python -m attacks canary-check reports/gatehouse
+      - name: HTTP scenarios (baseline and gatehouse)
+        run: |
+          uv run python -m attacks http --target direct --out reports/direct-http
+          uv run python -m attacks http --target gatehouse --out reports/gatehouse-http
       - name: Latency benchmark (informational, shared runners are noisy)
         run: |
           uv run python -m bench.latency --iterations 100 --out reports/bench
@@ -89,7 +93,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - run: uv run python -m detections.kusto --url http://localhost:8080 --wait 300
 
   infra:
