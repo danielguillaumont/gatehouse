@@ -33,3 +33,6 @@ ca07b8fa617328bf68ec508a612aaf5730576e5d:tests/inspect/test_secrets.py:jwt:26
 d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:aws-access-token:245
 d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:slack-bot-token:230
 d4de1b5a48f4445ee3b77f13c178d26a99c8fc51:attacks/scenarios/heldout.yaml:slack-bot-token:236
+a05cbf62fb1fdf0e407607dcec03c2bd597e8bdb:attacks/http_scenarios.yaml:aws-access-token:85
+a05cbf62fb1fdf0e407607dcec03c2bd597e8bdb:attacks/http_scenarios.yaml:aws-access-token:96
+a05cbf62fb1fdf0e407607dcec03c2bd597e8bdb:attacks/http_scenarios.yaml:aws-access-token:97
