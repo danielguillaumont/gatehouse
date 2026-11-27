@@ -293,3 +293,41 @@ The SDK used for interop tests (`mcp` 2.3.0, already the pinned dev dependency) 
 this revision on stdio and Streamable HTTP, with a dual-era `mode="auto"` client that probes
 `server/discover` and falls back to `initialize` on any error except a disjoint -32022
 (`mcp/client/_probe.py`).
+
+**D-037 (2026-11-27) Session flow control stays the core of v2, but it is not a first.**
+The landscape check (`docs/research/landscape-2026-11.md`) found that Pipelock already
+ships a `lethal-trifecta` chain detector at its MCP proxy (`internal/mcp/chains/matcher.go`
+at `aef5bade83`), and that AWS AgentCore Policy's Dogwood language adds session-aware
+temporal policies. The roadmap's working rule says to stop an item when a competitor
+already does it and pick the next-best option. I checked what they actually do. Pipelock's
+check is an *ordered* untrusted → sensitive → sink subsequence inside a 20-call / 60-second
+window, with tools classified by keywords in their (server-chosen) names. It warns by
+default, and stdio MCP results raise no taint unless declared external. AgentCore's
+temporal policies are a managed-gateway feature. Neither tracks values from a result into
+a later argument. So the item continues, with three changes:
+- **No novelty claim.** README and docs say gatehouse implements the Rule of Two at the
+  proxy and cite Pipelock's trifecta detector and AgentCore Dogwood as related work.
+- **The differences become design requirements and are tested:** order-independent (any
+  order of the three properties trips it); no time window (the whole agent session, across
+  every wrapped server); labels from the policy, never from tool names or annotations;
+  value-level provenance as evidence on egress; invariants provable in CI.
+- **Pipelock with its `strict` preset joins the M6 comparison** on the `flow.*` chains,
+  including padded chains (more than 20 calls, or a pause longer than 60 s) and reordered
+  ones, because those are exactly where the designs differ.
+Alternatives considered: drop flow control and compete on detection (rejected: the
+held-out set shows detection is the weak layer); claim novelty for the cross-server part
+(rejected: not verified that no one else does it).
+
+**D-038 (2026-11-27) Cedar via `cedarpy`; proofs via the Cedar CLI's `symcc` in Linux CI.**
+`cedar-python` (0.1.4) requires Python ≥ 3.12 and gatehouse supports 3.11, so the plan's
+primary choice is out. `cedarpy` 4.12.2 (`k9securityio/cedar-py`, Apache-2.0) has wheels
+for Windows, Linux and macOS on cp310–cp314 and passed an `is_authorized` smoke test with
+context conditions on Windows under 3.11, 3.12 and 3.13. It sits behind gatehouse's own
+`PolicyEngine` interface so it can be swapped. No Python package does symbolic policy
+analysis in-process, so `gatehouse policy prove` writes the Cedar policy and schema to
+files and runs `cedar symcc …` from cedar-policy-cli 4.15.0 (experimental flavour, needs
+the cvc5 solver), installed only in a Linux CI job. Without the CLI, `policy prove` falls
+back to a bounded check that enumerates the generated schema's actions against
+representative contexts, and says so in its output. Alternatives: cedar-python's
+`cedar.lean` (shells out to Lean + cvc5 as well, and is 3.12+), or a small Rust prover on
+`cedar-policy-symcc` (more code to maintain).
