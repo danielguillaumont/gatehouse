@@ -1,0 +1,44 @@
+name: heldout2-llm
+
+# Model-written mutations (paraphrase, German, Spanish) for held-out v2 (D-046). Run once
+# by hand; the llm.json artifact is committed and frozen, and nothing else reads this
+# workflow. Ollama and the model are pinned so the run can be repeated.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      OLLAMA_VERSION: "0.40.16"
+      MODEL: "qwen2.5:7b" # Apache-2.0; ollama manifest layer sha256:2bada8a74506...
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked --all-extras
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Pull the model
+        run: |
+          (ollama serve > ollama.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:11434/api/version && break; sleep 2; done
+          ollama pull "$MODEL"
+          ollama show "$MODEL" --modelfile | head -5
+      - name: Generate
+        run: |
+          mkdir -p out
+          uv run python -m attacks.heldout2.llm --model "$MODEL" --out out/llm.json --meta out/llm-meta.json
+          ollama --version >> out/llm-meta.txt
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: heldout2-llm
+          path: |
+            out/
+            ollama.log
