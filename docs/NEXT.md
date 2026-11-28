@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-28** (v0.2.0 released; M6 in progress).
+Last updated **2026-11-28** (v0.2.0 released; M6 release run done, write-up pending; M7 local in progress).
 
 ## Status
 
@@ -161,6 +161,26 @@ Remaining:
 **Overnight plan (2026-11-28):** finish M6 and release v0.3.0; then M7 without Azure
 (KQL, hunting pack, workbook, OIDC in HTTP mode, the playbook control loop with a fake
 queue, Bicep, a deploy checklist) and release v0.4.0; then M8 and release v0.5.0.
+
+Release run 46112090830 **finished (success)**. Next: write up its numbers, then tag
+v0.3.0.
+
+### M7 (local parts) → v0.4.0 (in progress)
+
+Done:
+- **OIDC/Entra bearer tokens in `gatehouse serve`** (`bacced0`; ADR-0008, D-054): JWKS
+  signature, iss/aud/exp, roles and scopes, the RFC 9728 metadata and challenge,
+  `auth.denied`, the principal in Cedar and `tool.call`. Tested against a local issuer
+  (`attacks/oidc_issuer.py`), both in-process and over real TCP.
+- **Control signals** (`c6e56ab`; D-055): `gatehouse listen` polls an Azure Storage
+  queue and can only kill, lock or revoke. The playbook message templates are in
+  `infra/playbook/`. Tested end to end against a fake queue.
+
+Remaining:
+- the playbook and automation rule in Bicep, plus the queue and its RBAC;
+- KQL rules for the v2 event types, with sample stories; the hunting pack; the workbook;
+- `docs/sentinel-setup.md` as a deploy checklist; Prompt Shields costs;
+- the explainer; v0.4.0.
 
 Not possible without the owner (noted for M7):
 - **Prompt Guard 2** is gated on Hugging Face, so the ONNX path is tested with fakes
