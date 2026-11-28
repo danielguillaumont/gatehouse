@@ -74,3 +74,7 @@ fcd1a5804fc2f5531fdf653496f9a770baa0d06a:attacks/heldout2/scenarios/heldout2.yam
 fcd1a5804fc2f5531fdf653496f9a770baa0d06a:attacks/heldout2/scenarios/heldout2.yaml:generic-api-key:9282
 fcd1a5804fc2f5531fdf653496f9a770baa0d06a:attacks/heldout2/scenarios/heldout2.yaml:generic-api-key:9624
 fcd1a5804fc2f5531fdf653496f9a770baa0d06a:attacks/heldout2/scenarios/heldout2.yaml:generic-api-key:9674
+# M6 rule fixes (D-052): the synthetic AKIAZQ3CANARY7EXMPL1 canary in canaries lists and tests
+5d19af8873e286bfe5603b3f21a68317e470fdb1:attacks/scenarios/rules_m6.yaml:aws-access-token:15
+5d19af8873e286bfe5603b3f21a68317e470fdb1:attacks/scenarios/rules_m6.yaml:aws-access-token:31
+5d19af8873e286bfe5603b3f21a68317e470fdb1:tests/inspect/test_m6_rules.py:aws-access-token:21
