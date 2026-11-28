@@ -165,11 +165,11 @@ Evaluation first, then detectors. Heavy runs go in GitHub Actions, not locally.
 ## Next steps
 
 1. Detection improvements. Each needs a **new** held-out set to measure it (D-032).
-   - hex decoding for secrets; base64 decoding for results
+   - ~~hex decoding for secrets; base64 decoding for results~~ (M6, D-052)
    - per-rule severity overrides in the policy: fixes the two held-out false positives
      without a global `high: log`
-   - more destructive verbs (`find -delete`, `dd`, `mkfs`), credential-directory globs
-   - scan numbers for PII; reference-style markdown images
+   - ~~more destructive verbs (`find -delete`, `dd`, `mkfs`), credential-directory globs~~ (M6, D-052)
+   - ~~scan numbers for PII; reference-style markdown images~~ (M6, D-052; card numbers only)
    - read gateward's SQLite audit log so its alerts can be scored
 2. Inspection of `resources/*` and `prompts/*` content (sampling and elicitation are
    inspected since M4).

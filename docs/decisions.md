@@ -968,3 +968,37 @@ budget; shadow is the default (ADR-0007).**
   - Classifiers inside the pure pipeline: rejected, because inference is I/O.
   - Fail open in enforce: rejected by ADR-0001.
   - Enforce as the default: rejected, because of unmeasured false positives.
+
+**D-052 (2026-11-28) M6 rule fixes: the NEXT.md list, measured on held-out v2.** The
+fixes, each with attack scenarios and benign twins in `attacks/scenarios/rules_m6.yaml`
+(milestone `m6-rules`, 10 attacks and 9 benign):
+- **Decoding.** Moved into `inspect/decode.py`.
+  - Secrets: base64 (as before), plus hex and percent-encoding.
+  - Results: base64 and hex, at most 64 decoded copies per result.
+  - A decoding counts only if it is at least 90% printable ASCII. So digests, image
+    data and identifiers drop out, and the benign twins cover them.
+- **Commands.** `destructive-disk-or-tree`:
+  - `find` from `/`, `~` or `$HOME` with `-delete` or `-exec rm`;
+  - `dd of=/dev/<disk>`;
+  - `mkfs`, `mke2fs`, `wipefs` or `shred` on a device;
+  - PowerShell `Clear-Disk`, `Format-Volume` and `Initialize-Disk`.
+  - `diskpart ... clean` was dropped: it also matched a script that happened to be
+    named `clean.txt`.
+- **Paths.** `credential-directory`: bare directories and globs for `.ssh`, `.aws`,
+  `.gnupg`, `.azure`, `.kube`, `.password-store` and `.config/gcloud`. `known_hosts`
+  and `.ssh/config` are not flagged.
+- **Card numbers sent as JSON numbers.** A Luhn check alone would flag about 1 in 10
+  integer IDs, so these numbers also need a card-network prefix and length (Visa,
+  Mastercard including the 2-series, Amex, Discover, JCB, Diners, UnionPay). String
+  matching is unchanged.
+- **Reference-style markdown images.** `![x][ref]`, `![ref][]` or `![ref]`, together
+  with a `[ref]: URL?k=v` definition and case-insensitive labels, give
+  `response.exfil_url/markdown-reference-image-with-query`.
+- **Held-out v1.** These fixes address held-out v1 misses by name, so v1 can no longer
+  measure them (D-032).
+  - The numbers reported for this change come from held-out v2, which was frozen and
+    hashed before any of these rules were written (D-046, MANIFEST.json).
+  - The v1 ids that are now caught are listed in `docs/known-bypasses.md` as a
+    regression check only.
+- **Not fixed:** plain links with data in the query (they need a click) and rot13.
+  Both are still documented as bypasses.

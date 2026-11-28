@@ -34,6 +34,23 @@ COMMAND_RULES: tuple[PatternRule, ...] = (
         _OWASP,
     ),
     PatternRule(
+        "destructive-disk-or-tree",
+        "find -delete or -exec rm from /, ~ or $HOME, or a raw write or format of a disk",
+        ci(
+            r"\bfind\s+(?:/|~/?|\$home/?|\"?\$\{?home\}?\"?/?)(?=\s|$)[^\n;|&]{0,200}?"
+            r"\s-(?:delete\b|exec(?:dir)?\s+rm\b)|"
+            r"\bdd\b[^\n;|&]{0,200}?\bof=/dev/(?:sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|"
+            r"mmcblk\d|disk\d|rdisk\d|mapper/)|"
+            r"\b(?:mkfs(?:\.[a-z0-9]{1,10})?|mke2fs|wipefs|shred)\b[^\n;|&]{0,100}?\s/dev/"
+            r"(?:sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|disk\d|rdisk\d|mapper/)|"
+            r"\b(?:clear-disk|format-volume|initialize-disk)\b"
+        ),
+        Severity.CRITICAL,
+        ("find", "dd", "mkfs", "mke2fs", "wipefs", "shred", "-disk", "-volume"),
+        ("AML.T0101", "T1485", "T1561"),
+        _OWASP,
+    ),
+    PatternRule(
         "download-and-execute",
         "downloads a script and pipes it to a shell",
         ci(

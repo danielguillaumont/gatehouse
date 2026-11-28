@@ -78,6 +78,23 @@ PATH_RULES: tuple[PatternRule, ...] = (
         _OWASP,
     ),
     PatternRule(
+        "credential-directory",
+        "a whole credential directory or a glob over one (~/.ssh, ~/.aws/*, ~/.gnupg)",
+        _c(
+            r"(?:^|[/\s\"'=~])\.(?:ssh|aws|gnupg|azure|kube|password-store)"
+            r"(?:/\*{1,2}(?:\.\*|/\*)?)?/?"
+            + _END
+            + r"|(?:^|[/\s\"'=~])\.config/gcloud(?:/\*{1,2})?/?"
+            + _END
+            + r"|(?:^|[/\s\"'=~])\.ssh/id_\*"
+            + _END
+        ),
+        Severity.HIGH,
+        (".ssh", ".aws", ".gnupg", ".azure", ".kube", ".password-store", "gcloud"),
+        ("AML.T0098", "T1552.004"),
+        _OWASP,
+    ),
+    PatternRule(
         "dotenv",
         "environment file with secrets (.env)",
         _c(

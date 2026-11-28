@@ -16,11 +16,11 @@ from gatehouse.inspect.commands import detect_commands
 from gatehouse.inspect.injection import detect_injection
 from gatehouse.inspect.invisible import detect_invisible
 from gatehouse.inspect.paths import detect_paths
-from gatehouse.inspect.pii import detect_pii
+from gatehouse.inspect.pii import detect_pii, detect_pii_numbers
 from gatehouse.inspect.poisoning import detect_poisoning
 from gatehouse.inspect.secrets import Fingerprinter, detect_secrets
 from gatehouse.inspect.self_protect import detect_self_protect
-from gatehouse.inspect.walk import WalkStats, iter_strings
+from gatehouse.inspect.walk import WalkStats, iter_numbers, iter_strings
 from gatehouse.jsonutil import as_str
 
 
@@ -65,6 +65,7 @@ def scan_arguments(
     findings += detect_commands(values)
     findings += detect_paths(values)
     findings += detect_pii(values)
+    findings += detect_pii_numbers(iter_numbers(arguments, "arguments"))
     findings += [f for f in detect_invisible(values) if f.rule_id == "unicode-tag-characters"]
     return apply_overrides(findings, cfg)
 

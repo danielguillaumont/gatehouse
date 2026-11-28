@@ -64,3 +64,32 @@ def iter_strings(
         elif (seq := as_list(current)) is not None:
             for index in range(len(seq) - 1, -1, -1):
                 stack.append((seq[index], f"{where}[{index}]", depth + 1))
+
+
+MAX_NUMBERS = 256
+
+
+def iter_numbers(value: object, path: str) -> Iterator[tuple[str, str]]:
+    """Yield ``(json_path, digits)`` for integers of 9 or more digits.
+
+    A card number sent as a JSON number (``"card": 4111111111111111``) is never a
+    string, so the string detectors would not see it. Booleans and floats are left out:
+    a float has already lost the digits that matter. Bounded like ``iter_strings``.
+    """
+    stack: list[tuple[object, str, int]] = [(value, path, 0)]
+    found = 0
+    while stack and found < MAX_NUMBERS:
+        current, where, depth = stack.pop()
+        if depth > MAX_DEPTH:
+            continue
+        if isinstance(current, int) and not isinstance(current, bool):
+            digits = str(abs(current))
+            if 9 <= len(digits) <= 32:
+                found += 1
+                yield where, digits
+        elif (obj := as_obj(current)) is not None:
+            for key, child in reversed(list(obj.items())):
+                stack.append((child, f"{where}.{key}", depth + 1))
+        elif (seq := as_list(current)) is not None:
+            for index in range(len(seq) - 1, -1, -1):
+                stack.append((seq[index], f"{where}[{index}]", depth + 1))

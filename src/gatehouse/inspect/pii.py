@@ -130,3 +130,47 @@ def detect_pii(strings: Iterable[tuple[str, str]]) -> list[Finding]:
                 )
             )
     return findings
+
+
+# Card-network prefixes and lengths (ISO/IEC 7812 IIN ranges as the networks publish
+# them). Used only for JSON numbers: integer IDs and timestamps pass Luhn 1 time in 10,
+# so a bare Luhn check on every 13-19 digit number would flag ordinary order IDs.
+_NETWORKS: tuple[tuple[tuple[int, int], int, tuple[int, ...]], ...] = (
+    ((4, 4), 1, (13, 16, 19)),  # Visa
+    ((51, 55), 2, (16,)),  # Mastercard
+    ((2221, 2720), 4, (16,)),  # Mastercard 2-series
+    ((34, 34), 2, (15,)),  # American Express
+    ((37, 37), 2, (15,)),
+    ((6011, 6011), 4, (16, 19)),  # Discover
+    ((644, 649), 3, (16, 19)),
+    ((65, 65), 2, (16, 19)),
+    ((3528, 3589), 4, (16, 19)),  # JCB
+    ((36, 36), 2, (14, 16, 19)),  # Diners Club
+    ((300, 305), 3, (14, 16, 19)),
+    ((62, 62), 2, (16, 17, 18, 19)),  # UnionPay
+)
+
+
+def card_network_ok(digits: str) -> bool:
+    for (low, high), width, lengths in _NETWORKS:
+        if len(digits) in lengths and low <= int(digits[:width]) <= high:
+            return True
+    return False
+
+
+def detect_pii_numbers(numbers: Iterable[tuple[str, str]]) -> list[Finding]:
+    """Card numbers sent as JSON numbers (``walk.iter_numbers``): Luhn and a network
+    prefix and length must both hold."""
+    return [
+        Finding(
+            detector_id=DETECTOR_ID,
+            rule_id="payment-card",
+            severity=Severity.HIGH,
+            summary="payment card number (Luhn-valid, sent as a JSON number)",
+            location=where,
+            mitre=_MITRE,
+            owasp=_OWASP,
+        )
+        for where, digits in numbers
+        if luhn_ok(digits) and card_network_ok(digits) and len(set(digits)) > 1
+    ]

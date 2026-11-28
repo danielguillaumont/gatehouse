@@ -25,7 +25,7 @@ from gatehouse.client import ClientError, StdioClient
 from gatehouse.jsonutil import as_obj
 
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
-MILESTONES = ("mvp", "m2", "m3", "m4", "m5", "m6", "external", "bypass")
+MILESTONES = ("mvp", "m2", "m3", "m4", "m5", "m6", "m6-rules", "external", "bypass")
 # Held-out sets and external corpora: measured, never a regression gate and never a
 # tuning target (D-032, D-046, D-047).
 HELDOUT = ("m3", "m6", "external")
