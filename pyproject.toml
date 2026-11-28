@@ -1,6 +1,6 @@
 [project]
 name = "gatehouse"
-version = "0.2.0a0"
+version = "0.2.0"
 description = "Detection-engineering and SOC layer for AI agent tool use over MCP"
 readme = "README.md"
 license = "MIT"
