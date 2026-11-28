@@ -328,6 +328,7 @@ class ServeOptions:
     allowed_hosts: frozenset[str] = frozenset()
     upstream_headers: dict[str, str] = field(default_factory=dict[str, str])
     request_timeout: float = 300.0
+    oidc: Any = None  # gatehouse.proxy.auth.OidcConfig (http extra)
 
 
 def build_http_app(opts: RunOptions, serve_opts: ServeOptions) -> tuple[Any, Emitter]:
@@ -345,6 +346,7 @@ def build_http_app(opts: RunOptions, serve_opts: ServeOptions) -> tuple[Any, Emi
             upstream_headers=dict(serve_opts.upstream_headers),
             max_body_bytes=opts.max_frame_bytes,
             request_timeout=serve_opts.request_timeout,
+            oidc=serve_opts.oidc,
         ),
         config,
         emitter,

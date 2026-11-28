@@ -1034,3 +1034,35 @@ judge layer is measured in CI.**
     without a gated download.
   - *Alternative.* Prompt Guard 2 in CI. Rejected: it is gated behind a Hugging Face
     token.
+
+**D-054 (2026-11-28) gatehouse serve validates OIDC bearer tokens in-process
+(ADR-0008).**
+- *Decision.* When `--oidc-issuer` and `--oidc-audience` are set, gatehouse checks:
+  - the JWT's signature against the issuer's JWKS;
+  - `iss`, `aud`, `exp` and `nbf`;
+  - optionally a required role or scope.
+
+  The principal is `<tid>/<oid>` (Entra ID) or `<iss>#<sub>`. It goes into Cedar and
+  into `Details.Principal`. Refusals give 401/403 with an RFC 9728 `resource_metadata`
+  challenge, plus an `auth.denied` event. The token is never forwarded.
+- *Why.*
+  - It is the MCP authorization spec's resource-server role.
+  - The principal must come from a verified token, not from a header that a front
+    proxy could be bypassed to set.
+  - PyJWT is the most widely used Python JWT library, and it rejects `alg: none`
+    unless it is explicitly allowed. gatehouse also pins the algorithm list itself.
+- *Alternatives.*
+  - An authenticating front proxy: still possible, but the principal would only be
+    trusted indirectly.
+  - Token introspection: Entra ID doesn't offer it for access tokens.
+  - OBO exchange: a different feature, deferred.
+- *Testing.* CI uses a local issuer process (`attacks/oidc_issuer.py`). The tests
+  cover:
+  - the missing-token challenge and the metadata document;
+  - expired, wrong-audience, wrong-issuer, wrong-key, unknown-kid, HS256 and `none`
+    tokens;
+  - the role requirement;
+  - JWKS refresh rate-limiting;
+  - no passthrough;
+  - a real-TCP end-to-end run.
+

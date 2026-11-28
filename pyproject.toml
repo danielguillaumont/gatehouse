@@ -22,6 +22,8 @@ dependencies = [
 http = [
     "httpx2>=2.16,<3",
     "uvicorn>=0.34,<1",
+    # bearer-token validation in serve mode (ADR-0008)
+    "pyjwt[crypto]>=2.10,<3",
 ]
 # Local Prompt Guard 2 classifier (ADR-0007). The model itself is gated by Meta and is
 # never downloaded by gatehouse; see docs/policy.md#classifiers.

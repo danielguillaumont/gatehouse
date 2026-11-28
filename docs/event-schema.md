@@ -61,7 +61,7 @@ disagree. `SchemaVersion` is 1.
 | `protocol.invalid_frame` / `batch_rejected` / `oversized_frame` / `unsolicited_response` | framing violations | |
 | `tools.listed` | a `tools/list` result was inspected | Offered, Visible, Filtered, PinningMode, ListedBy (`client`, or `gatehouse` for its own listing before a stateless call) |
 | `tools.list_changed` | server sent `notifications/tools/list_changed` | |
-| `tool.call` | every `tools/call` request | FindingCount |
+| `tool.call` | every `tools/call` request | FindingCount; Principal (HTTP mode with OIDC only, ADR-0008) |
 | `tool.result` | every `tools/call` response | IsError, HasError, FindingCount |
 | `server.request` | server-initiated request (sampling, elicitation, roots); 2026-07-28 servers must not send any | FindingCount |
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
@@ -70,6 +70,7 @@ disagree. `SchemaVersion` is 1.
 | `flow.provenance_match` | an egress call's arguments copy text or a secret from a `private_data` result the session read (D-043); high severity if the session also holds `untrusted_input` | DetectorId `flow.provenance`; RuleId `private-data-copied`, `private-secret-copied` or `provenance-unavailable`; MatchSummary names the source tools; Details.FindingAction |
 | `flow.rule_of_two` | a call completes the Rule-of-Two trifecta (any `flow.mode` but `off`); Action says what happened | FlowMode, SessionLabels, ToolLabels |
 | `classifier.verdict` | one per classifier per result or tool definition (ADR-0007); Severity and Action are only raised for an `alert` hit or an `enforce` failure (`fail_closed`) | DetectorId `classifier.<id>`; RuleId `prompt-injection`, `no-hit` or `classifier-unavailable`; LatencyMs; Details.Mode, Kind, Score, Threshold, Chunks, Truncated, Error |
+| `auth.denied` | `gatehouse serve --oidc-issuer` refused a request: no bearer token, a bad or expired token, or a missing role or scope (ADR-0008) | Reason; Details.Status (401 or 403), Error (`invalid_request`, `invalid_token`, `insufficient_scope`) |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
 | `response.quarantined` | a withheld result was kept for review (`gatehouse review`) | QuarantineId, Kept (false if over 1 MiB: withheld but not kept) |
 | `response.released` | a reviewed, released result was delivered when the agent repeated the call; the server is not called again | QuarantineId |

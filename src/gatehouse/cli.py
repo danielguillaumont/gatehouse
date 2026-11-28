@@ -111,6 +111,25 @@ def _parser() -> argparse.ArgumentParser:
         "are never forwarded (no token passthrough).",
     )
     serve.add_argument("--request-timeout", type=float, default=300.0)
+    serve.add_argument(
+        "--oidc-issuer",
+        help="require bearer tokens from this OIDC issuer (Entra ID: https://login.microsoftonline.com/<tenant>/v2.0)",
+    )
+    serve.add_argument("--oidc-audience", help="the audience tokens must carry: this server's id")
+    serve.add_argument("--oidc-jwks-url", help="JWKS URL (default: from discovery)")
+    serve.add_argument(
+        "--oidc-require-role",
+        action="append",
+        default=[],
+        help="accept only tokens with one of these roles (repeatable)",
+    )
+    serve.add_argument(
+        "--oidc-require-scope",
+        action="append",
+        default=[],
+        help="accept only tokens with one of these scopes (repeatable)",
+    )
+    serve.add_argument("--resource-url", help="public URL of this endpoint (metadata)")
 
     for name, helptext in (
         ("pin", "approve (pin) the current tool definitions of a server"),
@@ -253,6 +272,31 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except ImportError as exc:
         _err(f"gatehouse serve needs the http extra: pip install 'gatehouse[http]' ({exc})")
         return 2
+    oidc = None
+    if args.oidc_issuer or args.oidc_audience:
+        if not (args.oidc_issuer and args.oidc_audience):
+            _err("gatehouse: --oidc-issuer and --oidc-audience go together")
+            return 2
+        from gatehouse.proxy.auth import OidcConfig, require_secure
+
+        try:
+            require_secure(args.oidc_issuer, "OIDC issuer")
+        except ValueError as exc:
+            _err(f"gatehouse: {exc}")
+            return 2
+        oidc = OidcConfig(
+            issuer=args.oidc_issuer,
+            audience=args.oidc_audience,
+            jwks_url=args.oidc_jwks_url,
+            required_roles=frozenset(args.oidc_require_role),
+            required_scopes=frozenset(args.oidc_require_scope),
+            resource=args.resource_url,
+        )
+    elif args.allow_remote:
+        _err(
+            "gatehouse: warning: listening beyond loopback without --oidc-issuer; "
+            "put authentication in front of this endpoint"
+        )
     opts = RunOptions(
         server_name=args.name,
         policy_path=args.policy,
@@ -275,6 +319,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         allowed_hosts=frozenset(args.allow_host),
         upstream_headers=upstream_headers,
         request_timeout=args.request_timeout,
+        oidc=oidc,
     )
     return serve(opts, serve_opts)
 

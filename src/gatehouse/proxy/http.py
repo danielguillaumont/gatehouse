@@ -57,6 +57,7 @@ from gatehouse.protocol import (
     UPSTREAM_UNAVAILABLE,
 )
 from gatehouse.proxy import http_headers as hh
+from gatehouse.proxy.auth import AuthError, OidcConfig, TokenValidator
 from gatehouse.proxy.framing import DEFAULT_MAX_FRAME_BYTES, encode
 from gatehouse.proxy.router import Router, RouterConfig
 from gatehouse.proxy.session import Session
@@ -87,6 +88,9 @@ MAX_RESUMES = 5
 MAX_RETRY_WAIT_S = 2.0
 
 
+METADATA_PATH = "/.well-known/oauth-protected-resource"  # RFC 9728
+
+
 @dataclass
 class HttpProxyConfig:
     upstream: str
@@ -97,6 +101,8 @@ class HttpProxyConfig:
     max_body_bytes: int = DEFAULT_MAX_FRAME_BYTES
     request_timeout: float = 300.0
     connect_timeout: float = 10.0
+    # Bearer-token validation (ADR-0008). None: no authorization (loopback use).
+    oidc: OidcConfig | None = None
 
 
 @dataclass
@@ -138,6 +144,7 @@ class HttpProxy:
         router_config: RouterConfig,
         emitter: Emitter,
         client: httpx2.AsyncClient | None = None,
+        auth_client: httpx2.AsyncClient | None = None,
     ) -> None:
         self.cfg = config
         self.rcfg = router_config
@@ -147,6 +154,15 @@ class HttpProxy:
             follow_redirects=False,
         )
         self.modern = Session()  # every stateless request shares this view of the server
+        # The identity provider gets its own client: never the upstream's credentials.
+        self.auth = (
+            TokenValidator(
+                config.oidc,
+                auth_client or httpx2.AsyncClient(timeout=10.0, follow_redirects=False),
+            )
+            if config.oidc
+            else None
+        )
         self.legacy: dict[str, _Legacy] = {}
 
     # ------------------------------------------------------------------ ASGI entry
@@ -159,6 +175,12 @@ class HttpProxy:
             return
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
         pairs = [(k.decode("latin-1"), v.decode("latin-1")) for k, v in scope["headers"]]
+        if self.auth is not None and scope["path"] in (
+            METADATA_PATH,
+            METADATA_PATH + self.cfg.path,
+        ):
+            await _json(send, 200, self.auth.metadata(self._resource(scope, headers)))
+            return
         if scope["path"] != self.cfg.path:
             await _plain(send, 404, b"not found")
             return
@@ -170,9 +192,16 @@ class HttpProxy:
             )
             await _plain(send, status, why.encode())
             return
+        principal = "local"
+        if self.auth is not None:
+            try:
+                principal = (await self.auth.validate(headers.get("authorization"))).id
+            except AuthError as exc:
+                await self._deny(scope, headers, send, exc)
+                return
         method = scope["method"]
         if method == "POST":
-            await self._post(scope, receive, send, headers, pairs)
+            await self._post(scope, receive, send, headers, pairs, principal)
         elif method == "DELETE":
             await self._delete(send, headers)
         else:
@@ -187,6 +216,8 @@ class HttpProxy:
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
                 await self.client.aclose()
+                if self.auth is not None:
+                    await self.auth.client.aclose()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
 
@@ -203,6 +234,29 @@ class HttpProxy:
             if name not in LOOPBACK and host not in self.cfg.allowed_hosts:
                 return 421, "host not allowed"
         return None
+
+    def _resource(self, scope: Scope, headers: Mapping[str, str]) -> str:
+        scheme = str(scope.get("scheme") or "http")
+        host = headers.get("host") or "localhost"
+        return f"{scheme}://{host}{self.cfg.path}"
+
+    async def _deny(
+        self, scope: Scope, headers: Mapping[str, str], send: SendASGI, exc: AuthError
+    ) -> None:
+        self.emit.emit(
+            EventType.AUTH_DENIED,
+            severity=Severity.MEDIUM if exc.status == 401 else Severity.HIGH,
+            action=EventAction.BLOCKED,
+            direction=Direction.CLIENT_TO_SERVER,
+            reason=exc.reason,
+            details={"Status": exc.status, "Error": exc.error},
+        )
+        base = self._resource(scope, headers).removesuffix(self.cfg.path)
+        challenge = (
+            f'Bearer error="{exc.error}", resource_metadata="{base}{METADATA_PATH}{self.cfg.path}"'
+        )
+        body = {"error": exc.error, "error_description": exc.reason}
+        await _json(send, exc.status, body, [(b"www-authenticate", challenge.encode())])
 
     def _event(self, etype: EventType, severity: Severity, reason: str, **details: Any) -> None:
         self.emit.emit(
@@ -238,6 +292,7 @@ class HttpProxy:
         send: SendASGI,
         headers: Mapping[str, str],
         pairs: list[tuple[str, str]],
+        principal: str = "local",
     ) -> None:
         body = await self._read_body(receive)
         if body is None:
@@ -320,6 +375,7 @@ class HttpProxy:
         session = legacy.session if legacy is not None else self.modern
 
         channel = _Channel(self, session, legacy, modern, headers)
+        channel.router.principal = principal
         if not is_request:
             async with anyio.create_task_group() as tg:
                 channel.bind(tg)

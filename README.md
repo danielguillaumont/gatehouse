@@ -172,6 +172,12 @@ It listens on loopback unless you pass `--allow-remote`. It never forwards the c
 disagree with the body, and it rebuilds every upstream header from the body it
 inspected ([ADR-0003](docs/adr/0003-http-reverse-proxy.md)).
 
+With `--oidc-issuer` and `--oidc-audience` (for example Entra ID,
+`https://login.microsoftonline.com/<tenant>/v2.0`), it is an OAuth resource server.
+Every request needs a valid bearer token for this audience, checked against the
+issuer's JWKS. The caller becomes the Cedar principal, and refusals are logged as
+`auth.denied` ([ADR-0008](docs/adr/0008-http-authorization.md)).
+
 Both transports speak MCP 2024-11-05 through 2025-11-25 (the `initialize` handshake) and
 2026-07-28 (per-request `_meta`, `server/discover`, input rounds), with the same policy
 and detections on each ([ADR-0002](docs/adr/0002-protocol-eras.md)). In 2026-07-28,

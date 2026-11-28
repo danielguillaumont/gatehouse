@@ -255,6 +255,9 @@ class Router:
         self.to_client = send_to_client
         self.to_server = send_to_server
         self.session = session if session is not None else Session()
+        # The caller's identity: an OIDC principal behind `gatehouse serve --oidc-*`
+        # (ADR-0008), "local" on stdio.
+        self.principal = "local"
         # requests from the client forwarded on this channel, keyed by JSON-encoded id
         self.client_pending: dict[str, Pending] = {}
         # requests gatehouse itself sent upstream (its own tools/list)
@@ -700,6 +703,7 @@ class Router:
             arguments,
             tool_labels=flow.tool_labels if flow else frozenset(),
             session_labels=flow.session_labels if flow else frozenset(),
+            principal=self.principal,
         )
         if flow is not None:
             flow.violation = decision.flow_violation
@@ -1474,7 +1478,10 @@ class Router:
             arg_keys=sorted(call.args.keys())[:64],
             args_hmac=fp.json(call.args) if fp else None,
             args_bytes=call.args_bytes,
-            details={"FindingCount": len(verdict.findings)},
+            details={
+                "FindingCount": len(verdict.findings),
+                **({"Principal": self.principal} if self.principal != "local" else {}),
+            },
             **call.common,
         )
 

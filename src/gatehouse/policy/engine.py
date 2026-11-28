@@ -267,6 +267,7 @@ def decide(
     *,
     tool_labels: frozenset[Label] = frozenset(),
     session_labels: frozenset[Label] = frozenset(),
+    principal: str = "local",
 ) -> Decision:
     """Evaluate against a loaded policy, blocking everything if the load failed."""
     if load.policy is None:
@@ -279,6 +280,6 @@ def decide(
             server=normalize_name(server),
             tool=normalize_name(tool),
         )
-    request = AuthzRequest(server, tool, arguments, tool_labels, session_labels)
+    request = AuthzRequest(server, tool, arguments, tool_labels, session_labels, principal)
     engine: PolicyEngine = load.engine if load.engine is not None else NativeEngine(load.policy)
     return engine.decide(request)
