@@ -463,3 +463,80 @@ request's client name. Server-initiated legacy streams (GET) are not offered.
 Alternatives considered: forwarding the client's headers and only validating them
 (rejected: one parser difference away from smuggling); terminating MCP and re-issuing
 requests through the SDK client (rejected: violates message-level proxying).
+
+**D-040 (2026-11-27) Policy engine v2: YAML compiles to Cedar; a native evaluator is
+the reference; argument conditions and flow labels are additive to schema v1.**
+- **One authoring format.** Policies stay YAML (`version: 1`, all new keys optional, so
+  every v0.1 policy means what it meant). New: per-rule `when:` argument conditions
+  with an `otherwise:` action, per-server `labels:` (capability labels per tool
+  pattern), a top-level `flow:` block (Rule-of-Two mode), and an optional
+  `cedar_forbid:` file of extra Cedar `forbid` policies.
+- **Two engines, one semantics.** `PolicyEngine.decide(AuthzRequest)` has two
+  implementations. The native evaluator (the v0.1 engine, extended) is the reference.
+  The Cedar engine compiles the policy to Cedar, evaluates it with cedarpy, and runs
+  by default. Property-based tests (hypothesis) generate random policies, names,
+  condition outcomes and labels and require both engines to agree. At runtime the
+  native engine also explains the decision (matched rules, basis); if the two ever
+  disagree, gatehouse takes the stricter action and emits
+  `policy.engine_disagreement`. A missing or broken cedarpy is a policy load failure,
+  so every call is blocked (fail closed).
+- **Precedence in Cedar.** Cedar has forbid-overrides-permit and default deny, and no
+  "most specific wins". The compiler encodes it explicitly, using two actions:
+  - `call` is permitted means allow. Otherwise `call_with_approval` permitted means
+    require approval. Otherwise the call is blocked.
+  - A rule with conditions becomes two variants: conditions hold (`action`), and
+    conditions fail (`otherwise`).
+  - A block variant is a `forbid`.
+  - An allow variant permits `call` only if it is a winner (no matching rule
+    dominates it) and no approval variant that it doesn't dominate is also a winner.
+    That is the v0.1 tie rule.
+  - Every non-block winner permits `call_with_approval`.
+  - The default action applies when no rule matches.
+- **Names in Cedar.** Exact patterns compile to `==` and `*`-only globs to `like`, so
+  analysis is exact for them. Patterns with `?` or `[...]` cannot be expressed in
+  Cedar. gatehouse computes them (`fnmatchcase` on normalized names, as in v0.1) and
+  passes them as entity-group membership, which analysis treats as unconstrained.
+  Proofs are therefore sound but may report counterexamples that can't happen for
+  those patterns; they never prove something false.
+- **Argument conditions are gatehouse's pure functions, not Cedar expressions.** The
+  condition kinds are:
+  - `email_domains`, `url_hosts` (exact or `*.` suffix);
+  - `path_under` (lexically normalized, `..` escapes fail);
+  - `max`/`min` (numbers only, bools rejected);
+  - `one_of`.
+  Each applies to every value in a string or list argument, and a missing or
+  unparseable argument fails the condition. The results reach Cedar as
+  `context.when`, the set of rule ids whose conditions hold. Parsing emails, URLs
+  and paths inside Cedar isn't possible, and conditions as opaque booleans keep
+  proofs sound. `otherwise` must be stricter than `action`, so a condition that
+  can't be evaluated always yields the stricter outcome.
+- **Rule of Two** (Meta, 2025: an agent should have at most two of untrusted input,
+  private data, and state change/external communication).
+  - Labels are `untrusted_input`, `private_data`, `state_change`, `egress`. They come
+    from the policy. Server annotations and the v0.1 name heuristic can only *add*
+    labels, because a server choosing its own labels could otherwise remove them.
+  - A call violates the rule when the session's labels plus the tool's labels cover
+    all three properties and the tool contributes at least one.
+  - Modes:
+    - `off` is the default, for v0.1 compatibility;
+    - `monitor` logs `flow.rule_of_two`;
+    - `approve` turns allow into require approval;
+    - `enforce` blocks.
+  - In Cedar this is a `forbid` on `call` (approve) or on both actions (enforce), so
+    `policy prove` can check flow invariants.
+  - A tool's labels join the session when gatehouse forwards the call. A detected
+    injection in a result adds `untrusted_input` whatever the tool's labels.
+- **Session labels are shared across servers.** One gatehouse process per server means
+  flow state must be shared: a SQLite store (WAL, busy timeout) keyed by
+  `AgentSessionId`, in the state directory. Labels are a grow-only set written with
+  `INSERT OR IGNORE`, so concurrent writers cannot lose an update. The v0.1 pin
+  store (D-010) lost updates under lock contention (fixed in `7577e2d`), so a stress
+  test runs 40+ concurrent writers.
+Alternatives considered:
+- Cedar only, with no native engine: no reference to test the compiler against, and
+  no explanation for events.
+- Rule ids passed as entity groups for every pattern: proofs would lose exactness even
+  for exact names.
+- Conditions written in Cedar: no email/URL/path parsing in Cedar.
+- A broker process for the session store: more moving parts than a grow-only table
+  needs.

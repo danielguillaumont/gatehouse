@@ -31,7 +31,7 @@ disagree. `SchemaVersion` is 1.
 | ArgsHmac | string | HMAC-SHA256 of the canonical arguments, with a per-install key |
 | ArgsBytes / ResultBytes | int | Sizes |
 | LatencyMs | real | Server round trip for `tool.result` |
-| DecisionBasis | string | fail_closed, explicit_block, most_specific, tie, default, detection, unlisted_tool, stale_tool_list |
+| DecisionBasis | string | fail_closed, explicit_block, most_specific, tie, default, flow, engine_disagreement, detection, unlisted_tool, stale_tool_list |
 | PolicyRule | string | Policy rules that matched |
 | DetectorId / RuleId | string | For `detection` events, e.g. `args.secrets` / `aws-access-key-id` |
 | MatchSummary | string | Masked description of the match, e.g. `AKIA************MPL1` |

@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from gatehouse.policy.errors import (
     MAX_ERROR_MESSAGE_LEN,
@@ -101,6 +101,16 @@ def _format_validation_error(exc: ValidationError) -> str:
 
 def parse_policy(data: bytes | str) -> Policy:
     """Parse and validate policy content. Raises ``PolicyError`` on any problem."""
+    document = strict_yaml(data, "policy")
+    try:
+        return Policy.model_validate(document)
+    except ValidationError as exc:
+        raise PolicyError(PolicyErrorKind.SCHEMA, _format_validation_error(exc)) from None
+
+
+def strict_yaml(data: bytes | str, what: str = "policy") -> dict[str, Any]:
+    """Parse a YAML mapping with the policy loader's rules: at most 1 MiB, UTF-8, no
+    duplicate keys, no anchors or aliases. Raises ``PolicyError``."""
     raw_bytes = data.encode("utf-8") if isinstance(data, str) else data
     if len(raw_bytes) > MAX_POLICY_BYTES:
         raise PolicyError(PolicyErrorKind.TOO_LARGE, f"policy exceeds {MAX_POLICY_BYTES} bytes")
@@ -125,17 +135,24 @@ def parse_policy(data: bytes | str) -> Policy:
         raise PolicyError(PolicyErrorKind.YAML, "policy YAML is nested too deeply") from None
 
     if document is None:
-        raise PolicyError(PolicyErrorKind.SCHEMA, "policy file is empty")
+        raise PolicyError(PolicyErrorKind.SCHEMA, f"{what} file is empty")
     if not isinstance(document, dict):
         raise PolicyError(
             PolicyErrorKind.SCHEMA,
             f"top level must be a mapping, got {type(document).__name__}",
         )
+    return document
+
+
+def build_engine(policy: Policy) -> Any:
+    """The PolicyEngine for a parsed policy. Raises PolicyError(ENGINE) if it can't be
+    built (cedarpy missing, compiled policy rejected), which fails closed."""
+    from gatehouse.policy.cedar import CedarUnavailable, engine_for
 
     try:
-        return Policy.model_validate(document)
-    except ValidationError as exc:
-        raise PolicyError(PolicyErrorKind.SCHEMA, _format_validation_error(exc)) from None
+        return engine_for(policy)
+    except CedarUnavailable as exc:
+        raise PolicyError(PolicyErrorKind.ENGINE, str(exc)) from None
 
 
 class PolicyLoad(BaseModel):
@@ -147,6 +164,9 @@ class PolicyLoad(BaseModel):
     sha256: str | None
     policy: Policy | None
     error: PolicyLoadFailed | None
+    # The engine that decides calls (a PolicyEngine); built at load time so that a
+    # policy Cedar can't compile fails closed like any other invalid policy.
+    engine: Any = Field(default=None, exclude=True, repr=False)
 
     @model_validator(mode="after")
     def _exactly_one(self) -> PolicyLoad:
@@ -169,7 +189,8 @@ def load_policy(path: str | Path) -> PolicyLoad:
         if len(data) <= MAX_POLICY_BYTES:
             sha256 = hashlib.sha256(data).hexdigest()
         policy = parse_policy(data)
-        return PolicyLoad(path=path_str, sha256=sha256, policy=policy, error=None)
+        engine = build_engine(policy)
+        return PolicyLoad(path=path_str, sha256=sha256, policy=policy, error=None, engine=engine)
     except PolicyError as exc:
         kind, message = exc.kind, exc.message
     except OSError as exc:

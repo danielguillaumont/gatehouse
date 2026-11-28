@@ -17,6 +17,13 @@ servers:                          # optional
       "<tool pattern>":                           # object form
         action: require_approval                  # required
         reason: "Writes need a human"             # optional, 1-500 chars, shown in events
+      "<tool pattern>":                           # with argument conditions
+        action: allow
+        when:                                     # every condition must hold
+          to: {email_domains: ["example.com"]}
+        otherwise: require_approval               # optional; default block
+
+engine: cedar                     # optional; cedar (default) | native
 ```
 
 - Patterns are globs (`*`, `?`, `[abc]`, `[!abc]`), matched with `fnmatchcase` against
@@ -30,6 +37,8 @@ servers:                          # optional
 For a call to tool `T` on server `S`:
 
 1. **Fail closed.** No valid policy → **block** (see "Load errors" below).
+   A rule with `when:` conditions acts as its `action` when they all hold and as its
+   `otherwise` when they don't; everything below uses the action the rule acts as.
 2. **Explicit block wins.** If *any* matching rule says `block`, the result is **block**,
    regardless of how specific other rules are (IAM-style explicit deny).
 3. **Most specific match.** Otherwise, each pattern is ranked
@@ -43,7 +52,8 @@ For a call to tool `T` on server `S`:
 5. **No match** → `default_action`.
 
 Rule order in the file never matters. Decisions record their `basis`
-(`fail_closed | explicit_block | most_specific | tie | default`) for telemetry.
+(`fail_closed | explicit_block | most_specific | tie | default | flow |
+engine_disagreement`) for telemetry.
 
 Consequences worth knowing:
 
@@ -54,6 +64,64 @@ Consequences worth knowing:
 - A server-specific allow beats a global `require_approval` on the same tool pattern rank
   (`github/list_*: allow` beats `*/*_exec*: require_approval` for `github.list_exec_jobs`).
   Only `block` is global by force.
+
+## Argument conditions
+
+A rule can depend on the call's arguments. `when:` maps argument names to one condition
+each. If every condition holds, the rule acts as `action`. Otherwise it acts as
+`otherwise`, which defaults to `block` and must be stricter than `action`.
+
+| Condition | Holds when every value of the argument… |
+|---|---|
+| `email_domains: [example.com, "*.corp.example"]` | …contains addresses, and every address has a listed domain (`*.x` means a subdomain of `x`, not `x` itself) |
+| `url_hosts: [api.example.com]` (+ optional `schemes: [https]`) | …is an absolute URL with an allowed scheme (default `https`) and a listed host. IP literals only match when listed. |
+| `path_under: [/srv/data, "C:\\Users\\me\\Docs"]` | …is an absolute path that stays under a root after `.`/`..` are resolved (Windows paths compare case-insensitively) |
+| `max: 100`, `min: 0` | …is a JSON number in range (`true` and `"50"` are not numbers) |
+| `one_of: [main, dev]` | …is one of the listed strings or numbers (exact) |
+
+"Every value" means a string or number, or a list of them, of up to 64 items. The
+condition **fails** when the argument is missing, `null`, an empty list, the wrong type,
+too long (4096 characters) or doesn't parse. Because `otherwise` is always stricter,
+an argument gatehouse can't understand never loosens a decision.
+
+```yaml
+servers:
+  mail:
+    tools:
+      send_email:
+        action: allow
+        when:
+          to: {email_domains: ["example.com"]}
+          cc: {email_domains: ["example.com"]}
+        otherwise: require_approval
+  fs:
+    tools:
+      read_file:
+        action: allow
+        when: {path: {path_under: ["/srv/project"]}}
+```
+
+Limits:
+
+- Conditions are lexical. `path_under` doesn't resolve symlinks, so a server that follows
+  a symlink inside the root can still reach outside it. Point roots at directories the
+  agent can't write symlinks into, or rely on the server's own sandbox for that.
+- An argument the rule doesn't name is not checked. In the `send_email` example a `bcc`
+  argument would go through, so name every recipient field the tool has (`gatehouse
+  policy prove` can check that a policy constrains them; see below).
+- `block` rules can't have conditions: block is unconditional.
+
+## Engines: Cedar and the reference
+
+The policy compiles to [Cedar](https://www.cedarpolicy.com/) and Cedar (via
+[cedarpy](https://pypi.org/project/cedarpy/)) makes the runtime decision. The original
+evaluator is kept as the reference semantics. Property-based tests generate thousands of
+random policies and calls and require both to agree (D-040). If they ever disagreed at
+runtime, gatehouse would use the stricter result and record
+`basis: engine_disagreement`. `engine: native` uses only the reference evaluator. A
+policy Cedar can't compile fails to load (`ErrorKind: engine`), which blocks every call.
+
+`gatehouse policy compile POLICY` prints the Cedar policy and schema.
 
 ## Name normalization
 
@@ -209,4 +277,5 @@ and `PolicySha256` when the file was readable):
 | `duplicate_key` | the same key twice in one mapping (PyYAML would otherwise keep the last) |
 | `alias` | YAML anchors, aliases or `<<` merge keys |
 | `schema` | unknown keys (typos), wrong types, unsupported `version`, unknown action, non-string keys such as unquoted `on`, empty/whitespace patterns, patterns colliding after normalization |
+| `engine` | the Cedar engine could not be built (cedarpy missing, compiled policy rejected) |
 | `internal` | a gatehouse bug; still fails closed |
