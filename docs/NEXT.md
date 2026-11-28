@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-28** (v0.2.0 released; M6 release run done, write-up pending; M7 local in progress).
+Last updated **2026-11-28** (v0.3.0 released; M7 local parts in progress).
 
 ## Status
 
@@ -114,7 +114,7 @@ Acceptance, all from GitHub Actions run
   on `tests/policy/fixtures/policy-flow-broken.yaml`.
 - **Latency, 1 KiB p95:** +1.98 ms with Cedar, +2.67 ms with flow control.
 
-### M6 → v0.3.0 (in progress)
+### M6 → v0.3.0 (done)
 
 Evaluation first, then detectors. Heavy runs go in GitHub Actions, not locally.
 
@@ -145,25 +145,26 @@ Baseline before the detectors (run
 commit `1e28862`): `full` prevented 112/330 of held-out v2 and completed 0/8 chains, with
 1.0% FP.
 
-Remaining:
-- **The release evaluation** is run
-  [46112090830](https://github.com/danielguillaumont/gatehouse/actions/runs/46112090830)
-  at commit `37da760` (version 0.3.0). Every v0.3.0 number comes from it. When it
-  finishes: the "Evaluation v2" write-up in `docs/evaluation.md`, the README headline,
-  the explainer, then tag v0.3.0.
-- **Preview** from run 46110807546 (`f00612b`), not for reporting: the judge layer
-  prevented 206/330 of held-out v2 with 31/119 benign FP. Verdict p50 was 687 ms on CPU.
-- The bench can't time a judge layer, because the circuit breaker locks the session
-  once the judge withholds results. Verdict latency comes from `classifier.verdict`
-  events instead (`attacks.evaluate verdict-latency`).
+**Released as [v0.3.0](https://github.com/danielguillaumont/gatehouse/releases/tag/v0.3.0)**,
+tagged at the evaluated commit `37da760` (D-056). The numbers come from run
+[46112090830](https://github.com/danielguillaumont/gatehouse/actions/runs/46112090830)
+and are written up in `docs/evaluation.md#evaluation-v2-m6-v030` and the README:
+- `full` completes 0/8 chains and stops 123/330 of held-out v2, with 0.9% FP over 531
+  benign;
+- the judge layer stops 193/330, at 20.4% FP and a 714 ms p50 verdict.
+
+Open items from M6:
+- agent-egress-bench: Pipelock stops 27/32, gatehouse 17/32. Which argument
+  exfiltration forms gatehouse misses needs a look, and any fix needs a fresh held-out
+  set.
+- The bench can't time a judge layer, because the breaker locks the session. The
+  collator prints n/a, and the latency comes from verdict events.
 - Skipped: the optional live Ollama agent.
 
-**Overnight plan (2026-11-28):** finish M6 and release v0.3.0; then M7 without Azure
-(KQL, hunting pack, workbook, OIDC in HTTP mode, the playbook control loop with a fake
-queue, Bicep, a deploy checklist) and release v0.4.0; then M8 and release v0.5.0.
-
-Release run 46112090830 **finished (success)**. Next: write up its numbers, then tag
-v0.3.0.
+Not possible without the owner:
+- **Prompt Guard 2** is gated on Hugging Face, so the ONNX path is tested with fakes
+  and no Prompt Guard numbers are claimed.
+- **Prompt Shields** needs an Azure Content Safety resource.
 
 ### M7 (local parts) → v0.4.0 (in progress)
 
@@ -181,11 +182,6 @@ Remaining:
 - KQL rules for the v2 event types, with sample stories; the hunting pack; the workbook;
 - `docs/sentinel-setup.md` as a deploy checklist; Prompt Shields costs;
 - the explainer; v0.4.0.
-
-Not possible without the owner (noted for M7):
-- **Prompt Guard 2** is gated on Hugging Face, so the ONNX path is tested with fakes
-  and no Prompt Guard numbers are claimed.
-- **Prompt Shields** needs an Azure Content Safety resource.
 
 ## v0.1 milestone summary
 
