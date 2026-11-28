@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 MOCK_SERVER = ROOT / "mockserver.py"
 EVAL_POLICY = ROOT / "policy-eval.yaml"
+FLOW_POLICY = ROOT / "policy-flow.yaml"  # flow.* scenarios; FLOW_MODE is substituted
 
 
 @dataclass(frozen=True)

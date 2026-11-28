@@ -13,6 +13,7 @@ from attacks.harness import (
     Observation,
     ScenarioError,
     _scenario,  # pyright: ignore[reportPrivateUsage]
+    approvals_asked,
     attack_succeeded,
     benign_interference,
     load_scenarios,
@@ -129,3 +130,44 @@ def test_http_scenarios(tmp_path: Path, target: str) -> None:
     expected = "missed" if target == "direct" else "prevented"
     assert attacks and all(outcomes[k] == expected for k in attacks)
     assert all(v == "pass" for k, v in outcomes.items() if ".benign." in k)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("target", ["direct", "gatehouse"])
+def test_multi_server_flow_scenario(target: str) -> None:
+    # Three gatehouse processes share one agent session through the flow store: the chain
+    # works without a proxy and is stopped by structure (not detection) through gatehouse.
+    (sc,) = load_scenarios(only=["flow.paraphrased-exfil"])
+    assert set(sc.servers) == {"notes", "web", "mail"} and not sc.phases
+    obs = run_scenario(sc, TARGETS[target], flow_mode="approve")
+    res = judge(sc, obs)
+    if target == "direct":
+        assert res.outcome == "missed"
+    else:
+        assert res.outcome == "prevented"
+        assert res.detections == ["tool.call/flow"]
+
+
+@pytest.mark.integration
+def test_benign_flow_task_counts_approvals() -> None:
+    (sc,) = load_scenarios(only=["benign.flow.inbox-reply"])
+    obs = run_scenario(sc, TARGETS["gatehouse"], flow_mode="approve")
+    assert judge(sc, obs).outcome == "pass"
+    assert approvals_asked(obs) == 1
+
+
+def test_flow_scenarios_need_a_known_policy() -> None:
+    with pytest.raises(ScenarioError, match="policy"):
+        _scenario(
+            {
+                "id": "x",
+                "category": "flow",
+                "milestone": "m5",
+                "title": "t",
+                "policy": "other",
+                "servers": {"a": {"tools": []}},
+                "steps": [],
+                "success_if": {"server_received": {"tool": "t"}},
+            },
+            "test",
+        )

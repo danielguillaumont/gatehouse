@@ -1,0 +1,33 @@
+# Policy for the flow.* scenarios (milestone m5): an agent with notes, the web, email, an
+# issue tracker and file sharing, each on its own gatehouse. The rules allow everything a
+# normal task needs; the labels say what each tool is. Flow control does the rest. The
+# runner replaces FLOW_MODE (monitor | approve | enforce).
+version: 1
+default_action: block
+pinning: tofu
+findings: {critical: block, high: block, medium: log, low: log, informational: log}
+flow:
+  mode: FLOW_MODE
+controls:
+  circuit_breaker: 0   # measured separately; a flow block isn't a finding anyway
+servers:
+  notes:
+    tools: {"*": allow}
+    labels: {"*": [private_data], "delete_*": [state_change]}
+  web:
+    tools: {get_page: allow, search: allow, fetch: allow}
+    labels:
+      get_page: [untrusted_input]
+      search: [untrusted_input]
+      fetch: [untrusted_input, egress]
+  mail:
+    tools: {read_inbox: allow, send_email: allow}
+    labels:
+      read_inbox: [untrusted_input, private_data]
+      send_email: [egress]
+  issues:
+    tools: {read_issue: allow, list_issues: allow}
+    labels: {"*": [untrusted_input]}
+  files:
+    tools: {upload_file: allow, list_files: allow}
+    labels: {upload_file: [egress], list_files: [private_data]}

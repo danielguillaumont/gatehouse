@@ -748,3 +748,31 @@ Alternatives considered:
 - Grants covering detector approvals: they would pre-approve exactly what an injection
   asks for.
 - A time window on the breaker: an attacker could pace its attempts.
+
+**D-045 (2026-11-28) flow.* scenarios: several real gatehouse processes, scripted
+agent, a user who declines attacks and approves benign tasks.** The M5 acceptance is
+"0 `flow.*` chains complete in approve/enforce" and "the README reports approvals per
+benign task". Measuring that honestly needed these choices:
+- **Real processes.** Each server in a scenario runs behind its own `gatehouse run`,
+  sharing `GATEHOUSE_HOME` and `GATEHOUSE_AGENT_SESSION_ID` as the processes under one
+  agent do. That way the SQLite flow store is exercised across processes, not just
+  within one router (`attacks/harness.py`, `servers:`).
+- **The agent is scripted and always follows the injection.** That's the worst case for
+  gatehouse. A chain "completes" when the server receives the exfiltrating call (or,
+  for the reverse-order chain, when the private result reaches the agent).
+- **The injections are written to pass the content rules.** They're polite requests
+  with no trigger phrases, and the results show no `response.injection` finding on any
+  of them. So a prevented chain is prevented by structure: `tool.call/flow` is the only
+  enforcing detection, with provenance adding evidence on the two verbatim copies.
+- **The simulated user** declines gatehouse's approval prompts in attack scenarios and
+  accepts them in benign tasks (`user_approves: true`).
+  - This models a user who reads the prompt. A user who approves everything turns
+    `approve` into `monitor`, and that row is in the table too.
+  - Approvals per benign task count `approval.requested` events.
+- **Benign tasks** cover each two-property combination, which needs no approval, and
+  the three-property tasks a real user does, which need one: research then email,
+  inbox reply, issue then note. The set is small. The 200+ benign corpus is M6.
+- `python -m attacks flow` runs every flow-policy scenario under all three modes. CI
+  fails if a chain completes in approve or enforce, or if a benign task fails in
+  monitor or approve. Enforce is expected to block the three-property benign tasks, and
+  the table reports that.

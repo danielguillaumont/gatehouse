@@ -63,6 +63,10 @@ jobs:
         run: cat reports/gatehouse/report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Canary check (no secret reaches events or stderr)
         run: uv run python -m attacks canary-check reports/gatehouse
+      - name: Flow chains under every flow.mode (0 may complete in approve/enforce)
+        run: |
+          uv run python -m attacks flow --out reports/flow
+          cat reports/flow/flow.md >> "$GITHUB_STEP_SUMMARY"
       - name: HTTP scenarios (baseline and gatehouse)
         run: |
           uv run python -m attacks http --target direct --out reports/direct-http

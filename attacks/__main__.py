@@ -4,6 +4,7 @@
     python -m attacks run --target direct --out reports/direct
     python -m attacks canary-check reports/gatehouse
     python -m attacks http --target gatehouse --out reports/gatehouse-http
+    python -m attacks flow --out reports/flow   # flow.* chains under every flow.mode
 
 ``run`` writes report.json, report.md, and the raw evidence (gatehouse events and stderr
 per scenario) under --out. ``run`` exits 1 if the direct baseline shows a broken scenario
@@ -18,8 +19,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
-from attacks.harness import load_scenarios, run_scenario
+from attacks.harness import FLOW_MODES, approvals_asked, load_scenarios, run_scenario
 from attacks.report import Result, build_report, judge, render_markdown, write_report
 from attacks.targets import TARGETS
 
@@ -86,6 +88,77 @@ def cmd_run(args: argparse.Namespace) -> int:
 CLIENT_VIEW = "client.json"
 
 
+def cmd_flow(args: argparse.Namespace) -> int:
+    """Run the flow-policy scenarios under monitor, approve and enforce (D-045).
+
+    Reports, per mode: chains that completed, benign tasks that passed, and the approval
+    prompts each benign task needed. Exit 1 if a chain completes in approve or enforce,
+    or a benign task fails in monitor or approve."""
+    target = TARGETS["gatehouse"]
+    scenarios = [sc for sc in load_scenarios() if sc.policy == "flow"]
+    rows: list[dict[str, Any]] = []
+    for mode in FLOW_MODES:
+        for sc in scenarios:
+            obs = run_scenario(sc, target, flow_mode=mode)
+            res = judge(sc, obs)
+            rows.append(
+                {
+                    "mode": mode,
+                    "id": sc.id,
+                    "expect": sc.expect,
+                    "outcome": res.outcome,
+                    "approvals": approvals_asked(obs),
+                    "detections": res.detections,
+                }
+            )
+            _err(f"{mode:8} {res.outcome:15} {approvals_asked(obs)} {sc.id}")
+    out: Path = args.out
+    out.mkdir(parents=True, exist_ok=True)
+    meta = build_report(target.name, [])["meta"]
+    (out / "flow.json").write_text(json.dumps({"meta": meta, "rows": rows}, indent=1), "utf-8")
+    md = _flow_markdown(rows, meta)
+    (out / "flow.md").write_text(md, encoding="utf-8")
+    _err(md)
+    bad = [
+        r
+        for r in rows
+        if (r["expect"] == "attack" and r["mode"] != "monitor" and r["outcome"] != "prevented")
+        or (r["expect"] == "benign" and r["mode"] != "enforce" and r["outcome"] != "pass")
+    ]
+    for r in bad:
+        _err(f"FAIL {r['mode']} {r['id']}: {r['outcome']}")
+    return 1 if bad else 0
+
+
+def _flow_markdown(rows: list[dict[str, Any]], meta: dict[str, Any]) -> str:
+    lines = [
+        f"Command: `python -m attacks flow`, gatehouse {meta.get('gatehouse_version')}, "
+        f"commit `{meta.get('git_commit')}`, Python {meta.get('python')}, "
+        f"{meta.get('platform')}, {meta.get('generated_at')}.",
+        "",
+        "| flow.mode | Chains completed | Benign tasks passed | Approvals (benign) | "
+        "Approvals per benign task |",
+        "|---|---|---|---|---|",
+    ]
+    for mode in FLOW_MODES:
+        mine = [r for r in rows if r["mode"] == mode]
+        attacks = [r for r in mine if r["expect"] == "attack"]
+        benign = [r for r in mine if r["expect"] == "benign"]
+        completed = sum(r["outcome"] != "prevented" for r in attacks)
+        passed = sum(r["outcome"] == "pass" for r in benign)
+        asked = sum(int(r["approvals"]) for r in benign)
+        per = f"{asked / len(benign):.2f}" if benign else "n/a"
+        lines.append(
+            f"| {mode} | {completed} / {len(attacks)} | {passed} / {len(benign)} | "
+            f"{asked} | {per} |"
+        )
+    lines += ["", "| Benign task | Approvals (approve mode) |", "|---|---|"]
+    for r in rows:
+        if r["mode"] == "approve" and r["expect"] == "benign":
+            lines.append(f"| `{r['id']}` | {r['approvals']} |")
+    return "\n".join(lines) + "\n"
+
+
 def cmd_canary_check(args: argparse.Namespace) -> int:
     root: Path = args.dir
     canaries = {sc.id: sc.canaries for sc in load_scenarios() if sc.canaries}
@@ -114,10 +187,14 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--summary", action="store_true", help="also print report.md to stderr")
     c = sub.add_parser("canary-check")
     c.add_argument("dir", type=Path)
+    fl = sub.add_parser("flow", help="flow.* scenarios under monitor, approve and enforce")
+    fl.add_argument("--out", type=Path, required=True)
     h = sub.add_parser("http", help="Streamable HTTP scenarios (attacks/http_scenarios.yaml)")
     h.add_argument("--target", choices=("direct", "gatehouse"), default="gatehouse")
     h.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
+    if args.cmd == "flow":
+        return cmd_flow(args)
     if args.cmd == "http":
         from attacks.http_suite import run as run_http
 

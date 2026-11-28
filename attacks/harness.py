@@ -19,7 +19,7 @@ from typing import Any, cast
 
 import yaml
 
-from attacks.targets import EVAL_POLICY, RunPaths, Target, server_command
+from attacks.targets import EVAL_POLICY, FLOW_POLICY, RunPaths, Target, server_command
 from gatehouse.client import ClientError, StdioClient
 from gatehouse.jsonutil import as_obj
 
@@ -35,6 +35,7 @@ PREDICATES = (
     "client_saw_discover",
 )
 ERAS = ("legacy", "modern", "auto")
+FLOW_MODES = ("monitor", "approve", "enforce")
 
 
 class ScenarioError(ValueError):
@@ -68,6 +69,16 @@ class Scenario:
     # What the simulated user types into any form a server shows: every string field gets
     # this value (booleans stay false, so gatehouse's own approval prompts are declined).
     user_answer: str | None = None
+    # Multi-server scenarios (flow.*, milestone m5): every server runs at once, each behind
+    # its own target process, sharing one state directory and agent session. Steps name
+    # the server they act on. ``phases`` is empty for these.
+    servers: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
+    steps: list[Any] = field(default_factory=list[Any])
+    # "flow": run with attacks/policy-flow.yaml instead of the eval policy.
+    policy: str | None = None
+    # The simulated user approves gatehouse's approval prompts (benign flow tasks), so the
+    # task completes and the prompts can be counted. Attack scenarios decline.
+    user_approves: bool = False
 
     @property
     def benign(self) -> bool:
@@ -84,7 +95,13 @@ def _strs(value: object) -> list[str]:
 def _scenario(raw: Mapping[str, Any], source: str) -> Scenario:
     sid = str(raw.get("id", "?"))
     try:
-        if "phases" in raw:
+        servers: dict[str, dict[str, Any]] = {}
+        if "servers" in raw:
+            servers = {
+                str(k): dict(v) for k, v in cast(dict[str, dict[str, Any]], raw["servers"]).items()
+            }
+            phases: list[Phase] = []
+        elif "phases" in raw:
             phases = [
                 Phase(dict(p["server"]), list(p.get("steps", [])))
                 for p in cast(list[dict[str, Any]], raw["phases"])
@@ -107,6 +124,10 @@ def _scenario(raw: Mapping[str, Any], source: str) -> Scenario:
             era=str(raw.get("era", "legacy")),
             client_capabilities=dict(raw.get("client_capabilities") or {}),
             user_answer=str(raw["user_answer"]) if "user_answer" in raw else None,
+            servers=servers,
+            steps=list(raw.get("steps", [])) if servers else [],
+            policy=str(raw["policy"]) if "policy" in raw else None,
+            user_approves=bool(raw.get("user_approves", False)),
         )
     except (KeyError, TypeError) as exc:
         raise ScenarioError(f"{source}: scenario {sid}: missing/invalid field {exc}") from None
@@ -114,6 +135,8 @@ def _scenario(raw: Mapping[str, Any], source: str) -> Scenario:
         raise ScenarioError(f"{source}: {sid}: unknown milestone {sc.milestone!r}")
     if sc.era not in ERAS:
         raise ScenarioError(f"{source}: {sid}: era must be one of {ERAS}")
+    if sc.policy not in (None, "flow"):
+        raise ScenarioError(f"{source}: {sid}: policy must be flow (or absent)")
     if sc.expect not in ("attack", "benign"):
         raise ScenarioError(f"{source}: {sid}: expect must be attack or benign")
     if not sc.benign:
@@ -157,6 +180,7 @@ class Observation:
     eras: list[str | None] = field(default_factory=list[str | None])  # per phase
     input_requests: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     discovered: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
+    frame_servers: list[str] = field(default_factory=list[str])  # server of each frame
 
 
 def strip_result_marker(calls: list[dict[str, Any]], marker: str) -> int:
@@ -191,16 +215,18 @@ def _substitute(value: Any, mapping: Mapping[str, str]) -> Any:
     return value
 
 
-def _fill_form(params: Mapping[str, Any], answer: str | None) -> dict[str, Any]:
+def _fill_form(
+    params: Mapping[str, Any], answer: str | None, approve: bool = False
+) -> dict[str, Any]:
     """The simulated user's answer to an elicitation form."""
-    if answer is None:
+    if answer is None and not approve:
         return {"action": "decline"}
     schema = cast(dict[str, Any], params.get("requestedSchema") or {})
     props = cast(dict[str, Any], schema.get("properties") or {})
     content: dict[str, Any] = {}
     for key, prop in props.items():
         kind = cast(dict[str, Any], prop).get("type") if isinstance(prop, dict) else None
-        content[key] = False if kind == "boolean" else answer
+        content[key] = approve if kind == "boolean" else (answer or "")
     return {"action": "accept", "content": content}
 
 
@@ -209,6 +235,7 @@ class SimulatedUser:
 
     def __init__(self, sc: Scenario, obs: Observation) -> None:
         self.answer = sc.user_answer
+        self.approve = sc.user_approves
         self.obs = obs
 
     def server_request(self, frame: dict[str, Any]) -> dict[str, Any] | None:
@@ -216,7 +243,7 @@ class SimulatedUser:
             return None
         params = cast(dict[str, Any], frame.get("params") or {})
         self.obs.input_requests.append({"method": "elicitation/create", "params": params})
-        return _fill_form(params, self.answer)
+        return _fill_form(params, self.answer, self.approve)
 
     def input_required(self, result: dict[str, Any]) -> dict[str, Any] | None:
         requests = cast(dict[str, Any], result.get("inputRequests") or {})
@@ -225,7 +252,9 @@ class SimulatedUser:
             r = cast(dict[str, Any], req) if isinstance(req, dict) else {}
             self.obs.input_requests.append(r)
             if r.get("method") == "elicitation/create":
-                answers[key] = _fill_form(cast(dict[str, Any], r.get("params") or {}), self.answer)
+                answers[key] = _fill_form(
+                    cast(dict[str, Any], r.get("params") or {}), self.answer, self.approve
+                )
             elif r.get("method") == "roots/list":
                 answers[key] = {"roots": []}
         return answers if answers else None
@@ -275,7 +304,73 @@ def _run_steps(
             raise ScenarioError(f"unknown step {step!r}")
 
 
-def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) -> Observation:
+def _run_multi(
+    sc: Scenario,
+    target: Target,
+    obs: Observation,
+    rp: RunPaths,
+    env: dict[str, str],
+    subst: Mapping[str, str],
+    tmp: Path,
+) -> None:
+    """Every server at once, each behind its own target process (flow.* scenarios)."""
+    user = SimulatedUser(sc, obs)
+    clients: dict[str, StdioClient] = {}
+    try:
+        for name, server in sc.servers.items():
+            spec_path = tmp / f"spec-{name}.json"
+            spec_path.write_text(json.dumps({"name": name, **server}), encoding="utf-8")
+            own = RunPaths(policy=rp.policy, pins=rp.pins, events_dir=rp.events_dir / name)
+            client = StdioClient(
+                target.argv(name, server_command(), own),
+                env={
+                    **env,
+                    "ATTACK_SPEC": str(spec_path),
+                    "ATTACK_LOG": str(tmp / f"log-{name}.jsonl"),
+                },
+                timeout=20,
+                on_server_request=user.server_request,
+            )
+            clients[name] = client
+            client.connect(sc.era, sc.client_capabilities, client_name="gatehouse-attack-suite")
+        for step in sc.steps:
+            if step == "list":
+                for client in clients.values():
+                    try:
+                        obs.lists.append(client.list_tools())
+                    except ClientError as exc:
+                        obs.lists.append([])
+                        obs.errors.append(f"list: {exc}")
+                continue
+            call = cast(dict[str, Any], cast(dict[str, Any], step)["call"])
+            server, tool = str(call["server"]), str(call["tool"])
+            args = _substitute(call.get("arguments") or {}, subst)
+            try:
+                resp = clients[server].call_tool(tool, args, on_input=user.input_required)
+            except ClientError as exc:
+                resp = {"error": {"code": None, "message": str(exc)}}
+            obs.calls.append({"server": server, "tool": tool, "arguments": args, "response": resp})
+    except ClientError as exc:
+        obs.errors.append(str(exc))
+    finally:
+        for client in clients.values():
+            client.close()
+            obs.stderr.extend(client.stderr_lines)
+    for name in sc.servers:
+        log = tmp / f"log-{name}.jsonl"
+        if log.exists():
+            lines = log.read_text(encoding="utf-8").splitlines()
+            obs.server_frames.extend(lines)
+            obs.frame_servers.extend([name] * len(lines))
+
+
+def run_scenario(
+    sc: Scenario,
+    target: Target,
+    *,
+    keep_dir: Path | None = None,
+    flow_mode: str = "approve",
+) -> Observation:
     obs = Observation(sc.id, target.name)
     started = time.monotonic()
     tmp = Path(tempfile.mkdtemp(prefix="gh-attack-"))
@@ -284,7 +379,13 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
         state = home / ".gatehouse"
         state.mkdir(parents=True)
         rp = RunPaths(policy=tmp / "policy.yaml", pins=state / "pins.json", events_dir=tmp / "ev")
-        shutil.copyfile(EVAL_POLICY, rp.policy)
+        if sc.policy == "flow":
+            if flow_mode not in FLOW_MODES:
+                raise ScenarioError(f"flow mode must be one of {FLOW_MODES}")
+            text = FLOW_POLICY.read_text(encoding="utf-8").replace("FLOW_MODE", flow_mode)
+            rp.policy.write_text(text, encoding="utf-8")
+        else:
+            shutil.copyfile(EVAL_POLICY, rp.policy)
         log = tmp / "server-frames.jsonl"
         env = {
             "GATEHOUSE_HOME": str(state),
@@ -295,6 +396,8 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
             "PYTHONIOENCODING": "utf-8",
         }
         subst = {"policy_path": str(rp.policy), "pins_path": str(rp.pins)}
+        if sc.servers:
+            _run_multi(sc, target, obs, rp, env, subst, tmp)
         for index, phase in enumerate(sc.phases):
             spec_path = tmp / f"spec-{index}.json"
             spec = {"name": sc.id.split(".")[0], **phase.server}
@@ -325,7 +428,7 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
         if log.exists():
             obs.server_frames = log.read_text(encoding="utf-8").splitlines()
         if rp.events_dir.exists():
-            for f in sorted(rp.events_dir.glob("*.jsonl")):
+            for f in sorted(rp.events_dir.rglob("*.jsonl")):
                 for line in f.read_text(encoding="utf-8").splitlines():
                     if line.strip():
                         obs.events.append(json.loads(line))
@@ -347,16 +450,17 @@ def run_scenario(sc: Scenario, target: Target, *, keep_dir: Path | None = None) 
 # ---------------------------------------------------------------------- judging
 
 
-def _server_calls(obs: Observation) -> list[tuple[str, dict[str, Any]]]:
-    out: list[tuple[str, dict[str, Any]]] = []
-    for line in obs.server_frames:
+def _server_calls(obs: Observation) -> list[tuple[str, dict[str, Any], str | None]]:
+    out: list[tuple[str, dict[str, Any], str | None]] = []
+    for i, line in enumerate(obs.server_frames):
         try:
             frame: Any = json.loads(line)
         except ValueError:
             continue
         if isinstance(frame, dict) and cast(dict[str, Any], frame).get("method") == "tools/call":
             f = cast(dict[str, Any], frame)
-            out.append((line, f))
+            server = obs.frame_servers[i] if i < len(obs.frame_servers) else None
+            out.append((line, f, server))
     return out
 
 
@@ -379,9 +483,12 @@ def attack_succeeded(sc: Scenario, obs: Observation) -> bool:
                     return True
         return False
     if kind == "server_received":
-        for line, frame in _server_calls(obs):
+        want_server = str(cond["server"]) if "server" in cond else None
+        for line, frame, server in _server_calls(obs):
             params = cast(dict[str, Any], frame.get("params") or {})
             if params.get("name") != tool:
+                continue
+            if want_server is not None and server != want_server:
                 continue
             if needle is None or needle in line or needle in _dump(frame):
                 return True
@@ -414,6 +521,8 @@ def _expected_result(server: Mapping[str, Any], tool: str) -> dict[str, Any]:
 def benign_interference(sc: Scenario, obs: Observation) -> list[str]:
     """Ways the target changed benign traffic (each one is a false positive)."""
     problems: list[str] = list(obs.errors)
+    if sc.servers:
+        return problems + _multi_interference(sc, obs)
     lists = iter(obs.lists)
     calls = iter(obs.calls)
     for phase in sc.phases:
@@ -439,6 +548,39 @@ def benign_interference(sc: Scenario, obs: Observation) -> list[str]:
                     err = cast(dict[str, Any], c["response"].get("error") or {})
                     problems.append(f"call {c['tool']} altered/blocked: {err.get('message', '')}")
     return problems
+
+
+def _multi_interference(sc: Scenario, obs: Observation) -> list[str]:
+    problems: list[str] = []
+    expected_lists = [
+        cast(list[dict[str, Any]], s.get("tools") or [])
+        for step in sc.steps
+        if step == "list"
+        for s in sc.servers.values()
+    ]
+    for seen, offered in zip(obs.lists, expected_lists, strict=False):
+        if _dump(seen) != _dump(offered):
+            problems.append("tools/list altered")
+    for c in obs.calls:
+        expected = _expected_result(sc.servers[c["server"]], c["tool"])
+        got = c["response"].get("result")
+        if got != expected:
+            err = cast(dict[str, Any], c["response"].get("error") or {})
+            text = ""
+            body = as_obj(got)
+            if body is not None:
+                content = cast(list[Any], body.get("content") or [{}])
+                first = cast(dict[str, Any], content[0]) if content else {}
+                text = str(first.get("text", ""))[:160]
+            problems.append(
+                f"call {c['server']}/{c['tool']} altered/blocked: {err.get('message', '')}{text}"
+            )
+    return problems
+
+
+def approvals_asked(obs: Observation) -> int:
+    """Approval prompts gatehouse showed the user (all servers)."""
+    return sum(e.get("EventType") == "approval.requested" for e in obs.events)
 
 
 _ENFORCED = ("blocked", "filtered", "fail_closed", "denied")
