@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-27** (v0.2.0-alpha released: v2 milestone M4 done; M5 next).
+Last updated **2026-11-27** (v0.2.0-alpha released; M5 in progress: steps 1–3 done).
 
 ## Status
 
@@ -66,15 +66,32 @@ Done:
   - `docs/research/mcp-2026-intermediary-security.md`;
   - README.
 
-### M5 → v0.2.0 (next)
+### M5 → v0.2.0 (in progress)
 
-1. `PolicyEngine` interface with Cedar via `cedarpy` behind it (D-038). YAML compiles to
-   Cedar; the schema comes from pinned tools. Argument conditions: path roots,
-   URL/domain allowlists, recipient domains, numeric limits. `gatehouse policy prove`
-   (Cedar CLI `symcc` in Linux CI).
-2. Shared session store keyed by `AgentSessionId`; capability labels from the policy;
-   Rule-of-Two modes `monitor` / `approve` / `enforce`.
-3. Provenance fingerprints of `private_data` results checked against `egress` arguments.
+Done:
+1. **Policy engine v2** (`6cc11ff`, `825ed0a`, `b8e20c7`; D-040, D-041):
+   - a `PolicyEngine` interface with Cedar (`cedarpy` 4.12.2) behind it. YAML compiles
+     to Cedar, which is checked against the native reference on every decision and
+     fails strict on any disagreement;
+   - argument conditions;
+   - capability labels;
+   - `gatehouse policy compile` (schema and entities from pins) and `gatehouse policy
+     prove`: a bounded check, plus Cedar `symcc` with cvc5 1.3.1 in the Linux CI job
+     `policy-prove`. A deliberately broken policy fails it. symcc found a real gap
+     (`mail/read_delete`) that the bounded check missed.
+2. **Session flow control** (`6fd152e`; ADR-0005, D-042):
+   - a SQLite WAL store keyed by `AgentSessionId`, with no lost updates across 48
+     writer processes;
+   - Rule-of-Two modes `monitor`, `approve` and `enforce`, emitting
+     `flow.rule_of_two`;
+   - fails closed on read and on write.
+3. **Provenance** (`0310d45`; D-043):
+   - winnowed, keyed span fingerprints of `private_data` results, checked against
+     egress arguments, including their base64, hex and percent decodings;
+   - emits `flow.provenance_match`;
+   - does not catch paraphrases.
+
+Remaining:
 4. Quarantine + `gatehouse review`; scoped grants; approval budget; circuit breaker;
    kill switch.
 5. Approval through MRTR where the client supports it (ADR-0004), legacy elicitation
