@@ -167,6 +167,24 @@ class FlowSettings(_Strict):
     provenance: FindingAction = FindingAction.REQUIRE_APPROVAL
 
 
+class ApprovalBudget(_Strict):
+    """Approval prompts per agent session per window; 0 prompts means unlimited (D-044)."""
+
+    prompts: int = Field(default=20, ge=0, le=10_000)
+    minutes: int = Field(default=60, ge=1, le=24 * 60)
+
+
+class ControlSettings(_Strict):
+    """Response controls (ADR-0006, D-044). See docs/policy.md#response-controls."""
+
+    # Keep withheld results for review with `gatehouse review` (raw output, owner-only file).
+    quarantine: bool = True
+    # Lock the agent session after this many calls or results with a high or critical
+    # finding, until `gatehouse unlock`. 0 turns the breaker off.
+    circuit_breaker: int = Field(default=5, ge=0, le=10_000)
+    approval_budget: ApprovalBudget = Field(default_factory=ApprovalBudget)
+
+
 class ServerBlock(_Strict):
     tools: dict[Pattern, RuleSpec] = Field(default_factory=dict[str, ToolRule])
     pinning: PinningMode | None = None
@@ -226,6 +244,7 @@ class Policy(_Strict):
     findings: FindingActions = Field(default_factory=FindingActions)
     protocol: ProtocolSettings = Field(default_factory=ProtocolSettings)
     flow: FlowSettings = Field(default_factory=FlowSettings)
+    controls: ControlSettings = Field(default_factory=ControlSettings)
     # Which engine decides (D-040). Both implement the same semantics; native is the
     # reference the Cedar compiler is tested against.
     engine: Literal["cedar", "native"] = "cedar"

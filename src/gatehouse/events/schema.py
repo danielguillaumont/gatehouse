@@ -63,6 +63,8 @@ class EventType(StrEnum):
     FLOW_RULE_OF_TWO = "flow.rule_of_two"
     FLOW_PROVENANCE_MATCH = "flow.provenance_match"
     RESPONSE_QUARANTINED = "response.quarantined"
+    RESPONSE_RELEASED = "response.released"  # a reviewed result delivered from quarantine
+    CONTROL_CIRCUIT_BREAKER = "control.circuit_breaker"
     CONTROL_KILL_SWITCH = "control.kill_switch"
     # detections: DetectorId / RuleId say what was found
     DETECTION = "detection"

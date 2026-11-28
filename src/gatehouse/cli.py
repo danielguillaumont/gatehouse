@@ -143,6 +143,9 @@ def _parser() -> argparse.ArgumentParser:
     pp.add_argument(
         "--require-symcc", action="store_true", help="fail unless symcc can run (for CI)"
     )
+    from gatehouse.control_cli import add_parsers
+
+    add_parsers(sub)
     return p
 
 
@@ -174,6 +177,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         from gatehouse.policy_cli import cmd_compile, cmd_prove
 
         return cmd_compile(args) if args.policy_cmd == "compile" else cmd_prove(args)
+    from gatehouse.control_cli import COMMANDS
+
+    if args.cmd in COMMANDS:
+        from gatehouse.control_cli import dispatch
+
+        return dispatch(args)
     if args.cmd == "table-schema":
         from gatehouse.events.schema import sentinel_columns
 

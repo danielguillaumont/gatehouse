@@ -373,6 +373,48 @@ Server requests and MRTR input requests that imitate gatehouse's prompt (they me
 gatehouse, or carry a `requestState` shaped like its own) are withheld
 (`server_request.elicitation/mentions-gatehouse`, `server_request.shape/forged-gatehouse-state`).
 
+**Order of approval channels:**
+1. MRTR when the client speaks 2026-07-28 and declares form elicitation.
+2. Otherwise legacy `elicitation/create` when the client declared `elicitation`.
+3. Otherwise the call is blocked, with outcome `approval_required` on its `tool.call`
+   event.
+
+## Response controls
+
+What gatehouse does after it has decided (ADR-0006, D-044). Every gatehouse on the
+machine shares these through `<state dir>/control.sqlite3` and `<state dir>/KILL`. They
+are on by default:
+
+```yaml
+controls:
+  quarantine: true          # keep withheld results for `gatehouse review`
+  circuit_breaker: 5        # lock the session after 5 calls/results with high findings; 0 = off
+  approval_budget: {prompts: 20, minutes: 60}   # prompts per session per window; 0 = unlimited
+```
+
+| Control | What it does | Commands |
+|---|---|---|
+| **Kill switch** | While `<state dir>/KILL` exists, every gatehouse blocks every tool call and withholds every result. On POSIX, SIGUSR1 kills one process. | `gatehouse kill [--reason R]`, `gatehouse kill --off`. `touch` works too. |
+| **Circuit breaker** | Counts one strike per call or result with a high or critical finding, across every server in the agent session. At the threshold the session is locked: every call is blocked until a human unlocks it. | `gatehouse unlock [--session ID \| --all]` |
+| **Quarantine** | A withheld result is kept, owner-only and for 7 days, and the agent gets a stub with its id. After a human releases it, the agent's next identical call (same server, tool and arguments) gets the result once, without calling the server again. | `gatehouse review [list]`, `review show ID` (hidden characters shown as `⟦U+XXXX⟧`), `review release ID`, `review discard ID` |
+| **Scoped grants** | "Allow `send_email` to `@mycorp.com` for 30 minutes." A live grant answers an approval that the policy or the Rule of Two asks for, but never one a detector asks for. | `gatehouse grant add mail send_email --when '{to: {email_domains: [mycorp.com]}}' --for 30m [--uses N]`, `grant list`, `grant revoke ID` |
+| **Approval budget** | After N prompts in the window, calls that need approval are blocked instead of asked, and the reason suggests a scoped grant. The point is that the user isn't trained to click yes. | — |
+
+- `gatehouse status` shows all of them.
+- **The agent can't use these commands on itself.** A tool call whose arguments run
+  `gatehouse review show|release|discard`, `grant add|revoke`, `unlock` or `kill --off`
+  is blocked (`args.self_protect/gatehouse-control-command`). The state directory is
+  already a protected path.
+- **Failures are closed.**
+  - An unreadable kill file counts as engaged.
+  - An unreadable control store counts as locked.
+  - A budget that can't be read doesn't ask (the call is blocked).
+  - A grant that can't be read or spent grants nothing.
+  - A result that can't be quarantined is still withheld.
+- **Grant conditions** use the same syntax as rule conditions (see
+  [Argument conditions](#argument-conditions)), so arguments a grant doesn't name aren't
+  checked.
+
 ## Protocol settings
 
 ```yaml

@@ -44,6 +44,9 @@ of blocking it. Per-rule overrides would be the proper fix.
 | **Honest-looking names** | Policy rules match names, and the server chooses them. An exfiltration tool called `get_weather` passes a name rule. See `docs/policy.md`, "Tool names are attacker-controlled". |
 | **The server's own network** | A malicious server can send whatever it receives to the internet. gatehouse only sees the MCP pipe. |
 | **Compromised host** | Anyone who can run code as the user can kill or reconfigure gatehouse. `self_protect` only stops the *agent* from doing it through its tools. |
+| **Paraphrased exfiltration** | Provenance (D-043) matches copies of 55 or more characters, including base64, hex and percent-encoded ones. A summary or paraphrase of private data doesn't match. The Rule of Two (`flow.mode: approve` or `enforce`) still stops the chain, because it doesn't depend on spotting the copy. |
+| **Labels the policy forgot** | Flow control counts the labels the policy gives plus the name and annotation hints. An egress tool with an innocent name, no annotations and no `labels:` entry isn't counted (ADR-0005). |
+| **Control commands under another name** | The agent can't run `gatehouse review release`, `grant add`, `unlock` or `kill --off` through a tool, and the state directory is a protected path. A same-user shell that renames the binary, builds the command at run time or reaches the database by a path the rule doesn't know can still tamper (ADR-0006). |
 | **Telemetry loss** | If the JSONL sink fails, traffic continues (the one fail-open path, ADR-0001), reported as `gatehouse.fail_open`. An attacker who fills the disk loses you logs, not enforcement. |
 
 ## Protocol coverage gaps

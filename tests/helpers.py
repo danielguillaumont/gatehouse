@@ -17,6 +17,7 @@ from gatehouse.policy.loader import load_policy
 from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Approver, Router, RouterConfig
+from gatehouse.state.control import ControlStore
 from gatehouse.state.flow import FlowStore
 
 FINGERPRINT_KEY = b"k" * 32
@@ -186,6 +187,7 @@ def make_harness(
     http: bool = False,
     flow: FlowStore | None = None,
     agent_session_id: str = "agent",
+    control: ControlStore | None = None,
 ) -> RouterHarness:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(textwrap.dedent(policy_yaml), encoding="utf-8")
@@ -212,6 +214,7 @@ def make_harness(
         http=http,
         flow=flow if flow is not None else FlowStore(None),
         agent_session_id=agent_session_id,
+        control=control if control is not None else ControlStore(None),
     )
     harness: RouterHarness
 

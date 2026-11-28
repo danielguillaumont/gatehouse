@@ -31,7 +31,7 @@ disagree. `SchemaVersion` is 1.
 | ArgsHmac | string | HMAC-SHA256 of the canonical arguments, with a per-install key |
 | ArgsBytes / ResultBytes | int | Sizes |
 | LatencyMs | real | Server round trip for `tool.result` |
-| DecisionBasis | string | fail_closed, explicit_block, most_specific, tie, default, flow, engine_disagreement, detection, unlisted_tool, stale_tool_list |
+| DecisionBasis | string | fail_closed, explicit_block, most_specific, tie, default, flow, engine_disagreement, detection, unlisted_tool, stale_tool_list, kill_switch, circuit_breaker, grant, approval_budget |
 | PolicyRule | string | Policy rules that matched |
 | DetectorId / RuleId | string | For `detection` events, e.g. `args.secrets` / `aws-access-key-id` |
 | MatchSummary | string | Masked description of the match, e.g. `AKIA************MPL1` |
@@ -66,11 +66,15 @@ disagree. `SchemaVersion` is 1.
 | `server.request` | server-initiated request (sampling, elicitation, roots); 2026-07-28 servers must not send any | FindingCount |
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
 | `pin.store_error` | pin store unreadable or unwritable | |
-| `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients | Channel (`mrtr`) |
+| `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients; `granted` also when a scoped grant answers (D-044) | Channel (`mrtr`, `grant`), GrantId |
 | `flow.provenance_match` | an egress call's arguments copy text or a secret from a `private_data` result the session read (D-043); high severity if the session also holds `untrusted_input` | DetectorId `flow.provenance`; RuleId `private-data-copied`, `private-secret-copied` or `provenance-unavailable`; MatchSummary names the source tools; Details.FindingAction |
 | `flow.rule_of_two` | a call completes the Rule-of-Two trifecta (any `flow.mode` but `off`); Action says what happened | FlowMode, SessionLabels, ToolLabels |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
-| `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow store that can't be read or written (fails closed) | Component (`flow_store`) |
+| `response.quarantined` | a withheld result was kept for review (`gatehouse review`) | QuarantineId, Kept (false if over 1 MiB: withheld but not kept) |
+| `response.released` | a reviewed, released result was delivered when the agent repeated the call; the server is not called again | QuarantineId |
+| `control.kill_switch` | this process saw the kill switch engage or release (once per change) | State (`engaged`, `released`), Source (`file`, `signal`) |
+| `control.circuit_breaker` | the agent session was locked after N calls or results with high findings | Strikes, Threshold |
+| `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow or control store that can't be read or written (fails closed) | Component (`flow_store`, `control_store`) |
 | `gatehouse.fail_open` | telemetry lost (the only fail-open path, ADR-0001) | Component |
 
 ## Guarantees

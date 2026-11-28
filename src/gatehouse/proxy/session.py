@@ -44,6 +44,8 @@ class Pending:
     requested_version: str | None = None
     # tools/call with flow control on: the tool's effective capability labels
     flow_labels: frozenset[str] = frozenset()
+    # tools/call: keyed binding of server, tool and arguments (quarantine release)
+    call_key: str | None = None
 
 
 @dataclass

@@ -160,3 +160,24 @@
     results:
       translate: "Bonjour à tous 👋 — la réunion est déplacée à jeudi. 会议改到星期四。"
   steps: [list, {call: {tool: translate, arguments: {text: "Hello everyone 👋, the meeting moved to Thursday.", to: fr}}}]
+
+- id: benign.gatehouse-words
+  category: benign
+  expect: benign
+  milestone: m5
+  title: Read-only gatehouse commands and prose about reviews and grants
+  server:
+    tools:
+      - name: run_command
+        description: Run a shell command.
+        inputSchema: {type: object, properties: {cmd: {type: string}}}
+      - name: post_note
+        description: Post a note to the team channel.
+        inputSchema: {type: object, properties: {text: {type: string}}}
+    results:
+      run_command: "kill switch: off\nlocked sessions: 0"
+      post_note: "posted"
+  steps:
+    - list
+    - {call: {tool: run_command, arguments: {cmd: "gatehouse status && gatehouse review list"}}}
+    - {call: {tool: post_note, arguments: {text: "The gatehouse review of grant applications is Friday; please unlock the meeting room."}}}

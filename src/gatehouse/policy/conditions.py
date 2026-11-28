@@ -22,7 +22,15 @@ from collections.abc import Iterable, Mapping
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    TypeAdapter,
+    model_validator,
+)
 
 MAX_VALUES = 64
 MAX_VALUE_LEN = 4096
@@ -293,3 +301,18 @@ def all_hold(conditions: Mapping[str, Condition], arguments: Mapping[str, Any] |
         if not holds(condition, arguments[name]):
             return False
     return True
+
+
+_CONDITIONS: TypeAdapter[dict[str, Condition]] = TypeAdapter(dict[str, Condition])
+
+
+def parse_conditions(data: object) -> dict[str, Condition]:
+    """Validate an ``{argument: condition}`` mapping (scoped grants store them as JSON)."""
+    parsed = _CONDITIONS.validate_python(data)
+    if len(parsed) > 32:
+        raise ValueError("at most 32 argument conditions")
+    return parsed
+
+
+def dump_conditions(conditions: Mapping[str, Condition]) -> dict[str, Any]:
+    return _CONDITIONS.dump_python(dict(conditions), mode="json", exclude_defaults=False)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -30,6 +31,13 @@ from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Router, RouterConfig, Send
 from gatehouse.proxy.stdio import run_stdio
+from gatehouse.state.control import (
+    CONTROL_DB,
+    KILL_FILE,
+    ControlStore,
+    ControlStoreError,
+    ScopedGrant,
+)
 from gatehouse.state.flow import FlowStore, FlowStoreError
 
 
@@ -134,6 +142,8 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         emitter.emit(EventType.POLICY_LOADED, details={"PolicyPath": load.path})
 
     flow = _flow_store(load, emitter)
+    control = _control_store(emitter)
+    _install_kill_signal(control)
 
     protected = [opts.policy_path, opts.pins_path, opts.hmac_key_path, paths.state_dir()]
     if opts.events_dir is not None:
@@ -150,6 +160,7 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         state_signer=StateSigner(install_key) if opts.approval_timeout > 0 else None,
         flow=flow,
         agent_session_id=context.agent_session_id,
+        control=control,
     )
     return config, emitter
 
@@ -168,6 +179,67 @@ class _UnavailableFlowStore(FlowStore):
 
     def add(self, session: str, kind: str, values: Any, *, server: str, tool: str) -> None:
         raise FlowStoreError(self.error)
+
+    def find(self, session: str, kind: str, values: Any) -> dict[str, tuple[str, str]]:
+        raise FlowStoreError(self.error)
+
+
+class _UnavailableControlStore(ControlStore):
+    """Stands in for a control store that could not be opened. The kill-switch file still
+    works; everything else fails, so sessions count as locked, approvals aren't asked and
+    grants grant nothing (fail closed, ADR-0001)."""
+
+    def __init__(self, error: str, kill_file: Path) -> None:
+        super().__init__(None, kill_file=kill_file)
+        self.error = error
+
+    def locked(self, session: str) -> str | None:
+        raise ControlStoreError(self.error)
+
+    def strike(self, session: str) -> int:
+        raise ControlStoreError(self.error)
+
+    def take_prompt(self, session: str, limit: int, window_s: float) -> bool:
+        raise ControlStoreError(self.error)
+
+    def grants(self, *, server: str | None = None, live_only: bool = True) -> list[ScopedGrant]:
+        raise ControlStoreError(self.error)
+
+    def quarantine(self, **_: Any) -> str:
+        raise ControlStoreError(self.error)
+
+    def take_released(self, session: str, server: str, call_key: str) -> tuple[str, bytes] | None:
+        raise ControlStoreError(self.error)
+
+
+def _control_store(emitter: Emitter) -> ControlStore:
+    state = paths.state_dir()
+    try:
+        return ControlStore(state / CONTROL_DB)
+    except ControlStoreError as exc:
+        emitter.emit(
+            EventType.INTERNAL_ERROR,
+            severity=Severity.HIGH,
+            action=EventAction.FAIL_CLOSED,
+            reason=f"cannot open the control store; sessions count as locked: {exc}",
+            details={"Component": "control_store"},
+        )
+        return _UnavailableControlStore(str(exc), state / KILL_FILE)
+
+
+def _install_kill_signal(control: ControlStore) -> None:
+    """POSIX: SIGUSR1 engages the kill switch in this process (no file needed)."""
+    sig = getattr(signal, "SIGUSR1", None)
+    if sig is None:
+        return
+
+    def engage(signum: int, frame: object) -> None:
+        control.engage_local("SIGUSR1 received")
+
+    try:
+        signal.signal(sig, engage)
+    except ValueError:  # not the main thread (tests, embedding)
+        pass
 
 
 def _flow_store(load: PolicyLoad, emitter: Emitter) -> FlowStore:

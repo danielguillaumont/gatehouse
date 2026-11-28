@@ -669,3 +669,82 @@ Alternatives considered:
 - Embedding similarity: needs a model in the data path, isn't keyed, and can't be bounded
   as tightly.
 - Storing the text: unacceptable under the redaction invariant.
+
+**D-044 (2026-11-27) Response controls: one control store, a kill file, replayed
+quarantine releases, grants only for structural approvals.** The roadmap lists
+quarantine and review, scoped grants, an approval budget, a circuit breaker and a kill
+switch (file, signal, CLI) without saying how they fit together. ADR-0006 has the
+architecture. These are the choices within it:
+- **Kill switch.** The file `<state dir>/KILL` is checked on every call and every
+  result. When it's absent, the check is one failed `open`.
+  - Engaged: every tool call is blocked (`DecisionBasis: kill_switch`) and in-flight
+    results are withheld. Each process emits `control.kill_switch` once per change.
+  - SIGUSR1 kills one process (POSIX only).
+  - Other methods (`initialize`, `tools/list`, `ping`) still flow, so the client sees
+    why calls fail rather than a dead server.
+- **Circuit breaker.**
+  - One strike per call or result that has at least one high or critical finding.
+    Ten findings in one result count as one strike.
+  - Gatehouse's own `provenance-unavailable` doesn't count.
+  - Default threshold: 5 per agent session, with no window. A session that has been
+    blocked five times for high findings is either under attack or misconfigured, and
+    either way a human should look.
+  - Locks are shared across servers. `gatehouse unlock` resets the strikes.
+- **Approval budget.**
+  - Default: 20 prompts per agent session per 60 minutes.
+  - Spent only when a prompt is actually shown (MRTR or elicitation), not for calls
+    that can't be asked anyway.
+  - Past the budget the call is blocked (`approval_budget`) with a pointer to
+    `gatehouse grant add`. Approval fatigue is the risk the roadmap names. Blocking
+    asks the human for one deliberate grant rather than many reflexive yeses.
+- **Scoped grants.**
+  - A grant has a server, a tool glob, rule-style argument conditions, a TTL (at most 7
+    days) and optional uses.
+  - It answers a `require_approval` only when nothing but the policy decision asked for
+    approval. That includes Rule-of-Two approvals, which are part of the decision. It
+    excludes detector findings, tools flagged at listing time and provenance matches.
+  - A grant spends one use per call, atomically. A grant whose conditions don't parse
+    grants nothing.
+- **Quarantine.**
+  - Only results withheld for findings are kept. A withheld result because the flow or
+    control store failed, or because the kill switch is engaged, isn't kept: it wasn't
+    judged.
+  - Payloads over 1 MiB are withheld but not kept. At most 1000 items are kept, for 7
+    days.
+  - Release delivery replays the stored result on the next identical call (ADR-0006).
+- **Self-protection.** A new rule, `args.self_protect/gatehouse-control-command`
+  (high), covers `review show|release|discard`, `grant add|revoke`, `unlock` and
+  `kill --off`, with or without `.exe`, `uv run` or `python -m`.
+  - Read-only commands (`status`, `review list`) and engaging the kill switch stay
+    allowed: an agent that stops itself is fine.
+  - It's a new scenario set (`self.*`, milestone `m5`) with a benign twin full of
+    near-miss words (`benign.gatehouse-words`). It wasn't tuned on held-out data.
+- **Failures** (all fail closed):
+
+  | Failure | Behaviour |
+  |---|---|
+  | Unreadable kill file | engaged |
+  | Unreadable locks | session locked |
+  | Strike not recorded | this process locks the session |
+  | Budget unreadable | not asked, so blocked |
+  | Grants unreadable | none apply |
+  | Quarantine write fails | still withheld |
+  | Store can't open at start-up | a stand-in that fails every operation except the kill file |
+
+  Each emits `gatehouse.internal_error` with `Component: control_store`.
+- **Measured** (Windows 11, Python 3.12.2, `timeit` over 20,000 runs):
+  - Per-call overhead is about 0.1 ms: the kill-file check 73 µs, the lock read 13 µs,
+    and the released-result check 14 µs.
+  - The released-result check reads first and takes the write lock only when something
+    has been released. Before that change it was 66 µs, and it serialized every call
+    across processes.
+  - `tests/state/test_control_store.py` runs 16 processes × 25 strikes and 25 prompts
+    against one database, and every increment is counted.
+
+Alternatives considered:
+- Locks and grants in the grow-only flow store: they need delete and decrement.
+- A gatehouse-owned `quarantine_release` tool in `tools/list`: it would change what the
+  server offered and would need its own pin and policy story.
+- Grants covering detector approvals: they would pre-approve exactly what an injection
+  asks for.
+- A time window on the breaker: an attacker could pace its attempts.

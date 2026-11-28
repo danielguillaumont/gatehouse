@@ -24,7 +24,7 @@ from gatehouse.client import ClientError, StdioClient
 from gatehouse.jsonutil import as_obj
 
 SCENARIO_DIR = Path(__file__).resolve().parent / "scenarios"
-MILESTONES = ("mvp", "m2", "m3", "m4", "bypass")
+MILESTONES = ("mvp", "m2", "m3", "m4", "m5", "bypass")
 PREDICATES = (
     "client_saw_tool",
     "client_saw_result",

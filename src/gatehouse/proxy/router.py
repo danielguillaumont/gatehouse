@@ -22,6 +22,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -52,11 +53,13 @@ from gatehouse.inspect.secrets import detect_secrets
 from gatehouse.inspect.server_requests import SHAPE_ID, inspect_server_request
 from gatehouse.inspect.walk import WalkStats
 from gatehouse.jsonutil import as_list, as_obj, as_str
+from gatehouse.policy.conditions import all_hold, parse_conditions
 from gatehouse.policy.engine import decide, pinning_mode
 from gatehouse.policy.labels import tool_labels
 from gatehouse.policy.loader import PolicyLoad
 from gatehouse.policy.models import (
     Action,
+    ControlSettings,
     FindingAction,
     FlowMode,
     Label,
@@ -110,6 +113,12 @@ from gatehouse.proxy.modern import (
     request_meta,
 )
 from gatehouse.proxy.session import Era, Grant, Pending, Session, ToolInfo
+from gatehouse.state.control import (
+    MAX_QUARANTINE_BYTES,
+    ControlStore,
+    ControlStoreError,
+    KillState,
+)
 from gatehouse.state.flow import FlowStore, FlowStoreError
 from gatehouse.state.pinstore import (
     PinStore,
@@ -169,6 +178,9 @@ class RouterConfig:
     # agent, keyed by AgentSessionId. Only touched when the policy turns flow.mode on.
     flow: FlowStore = field(default_factory=lambda: FlowStore(None))
     agent_session_id: str = "local"
+    # Response controls (ADR-0006, D-044): kill switch, circuit breaker, approval budget,
+    # quarantine and scoped grants, shared by every gatehouse on the machine.
+    control: ControlStore = field(default_factory=lambda: ControlStore(None))
 
 
 @dataclass
@@ -188,6 +200,8 @@ class _CallVerdict:
     policy_rule: str | None
     findings: list[Finding]
     flow: _FlowCheck | None = None
+    # Only the policy (or the Rule of Two) asks for approval, so a scoped grant may answer.
+    grantable: bool = False
 
 
 @dataclass
@@ -241,6 +255,8 @@ class Router:
         # tools/list) run here so the client reader loop stays free. Without a task group
         # (unit tests) the call is awaited inline.
         self.task_group: TaskGroup | None = None
+        self._kill_seen = False  # last kill-switch state this process reported
+        self._local_locks: dict[str, str] = {}  # sessions locked while the store failed
 
     # ------------------------------------------------------------------ helpers
 
@@ -290,7 +306,9 @@ class Router:
     async def _reply_blocked_tool(
         self, request_id: object, reason: str, modern: bool = False
     ) -> None:
-        text = f"[gatehouse] Tool call blocked: {reason}"
+        await self._reply_tool_text(request_id, f"[gatehouse] Tool call blocked: {reason}", modern)
+
+    async def _reply_tool_text(self, request_id: object, text: str, modern: bool) -> None:
         result: dict[str, Any] = {"content": [{"type": "text", "text": text}], "isError": True}
         if modern:
             result = {"resultType": RESULT_COMPLETE, **result}
@@ -644,6 +662,15 @@ class Router:
         reasons: list[str] = []
         actions: list[Action] = []
 
+        kill = self._kill_switch()
+        if kill is not None:
+            actions.append(Action.BLOCK)
+            reasons.append(f"kill switch engaged: {kill.reason}")
+        lock = self._session_lock()
+        if lock is not None:
+            actions.append(Action.BLOCK)
+            reasons.append(f"session locked: {lock}; a human can run `gatehouse unlock`")
+
         avail, avail_reason, avail_basis = self._availability(tool)
         if avail is not Action.ALLOW:
             actions.append(avail)
@@ -661,6 +688,7 @@ class Router:
         )
         if flow is not None:
             flow.violation = decision.flow_violation
+        policy_at = len(actions)
         actions.append(decision.action)
         if decision.action is not Action.ALLOW:
             reasons.append(f"policy: {decision.reason}")
@@ -683,13 +711,21 @@ class Router:
                 reasons.append(f"detector {f.detector_id}/{f.rule_id} at {f.location}")
 
         final = strictest(actions)
-        if avail is not Action.ALLOW:
+        others = actions[:policy_at] + actions[policy_at + 1 :]
+        grantable = decision.action is Action.REQUIRE_APPROVAL and (
+            strictest(others) is Action.ALLOW if others else True
+        )
+        if kill is not None:
+            basis = "kill_switch"
+        elif lock is not None:
+            basis = "circuit_breaker"
+        elif avail is not Action.ALLOW:
             basis = avail_basis or "unlisted_tool"
         elif _ACTION_ORDER[final] > _ACTION_ORDER[decision.action]:
             basis = "detection"
         else:
             basis = decision.basis.value
-        return _CallVerdict(final, reasons, basis, policy_rule, findings, flow)
+        return _CallVerdict(final, reasons, basis, policy_rule, findings, flow, grantable)
 
     def _flow_mode(self) -> FlowMode:
         policy = self.cfg.policy.policy
@@ -720,6 +756,184 @@ class Router:
                 details={"Component": "flow_store"},
             )
         return _FlowCheck(mode, labels, session, violation=False, store_error=error)
+
+    # ------------------------------------------------------------- response controls
+
+    @property
+    def _controls(self) -> ControlSettings:
+        policy = self.cfg.policy.policy
+        return policy.controls if policy is not None else ControlSettings()
+
+    def _control_error(self, what: str, exc: Exception, tool: str | None = None) -> None:
+        self.emit.emit(
+            EventType.INTERNAL_ERROR,
+            severity=Severity.HIGH,
+            action=EventAction.FAIL_CLOSED,
+            tool_name=tool,
+            reason=f"control store: {what}: {exc}",
+            details={"Component": "control_store"},
+        )
+
+    def _kill_switch(self) -> KillState | None:
+        """The kill switch, emitting control.kill_switch when this process sees it change."""
+        state = self.cfg.control.kill_state()
+        engaged = state is not None
+        if engaged != self._kill_seen:
+            self._kill_seen = engaged
+            self.emit.emit(
+                EventType.CONTROL_KILL_SWITCH,
+                severity=Severity.HIGH if engaged else Severity.MEDIUM,
+                action=EventAction.BLOCKED if engaged else EventAction.NONE,
+                reason=state.reason if state is not None else "kill switch released",
+                details={
+                    "State": "engaged" if engaged else "released",
+                    "Source": state.source if state is not None else "file",
+                },
+            )
+        return state
+
+    def _session_lock(self) -> str | None:
+        session = self.cfg.agent_session_id
+        if session in self._local_locks:
+            return self._local_locks[session]
+        try:
+            return self.cfg.control.locked(session)
+        except ControlStoreError as exc:
+            self._control_error("unreadable; treating the session as locked", exc)
+            return "the control store can't be read"
+
+    def _maybe_strike(self, findings: Iterable[Finding], tool: str) -> None:
+        """Count one circuit-breaker strike for a call or result with a high finding."""
+        threshold = self._controls.circuit_breaker
+        if threshold <= 0 or not any(
+            f.severity in (Severity.HIGH, Severity.CRITICAL) and f.rule_id not in _NOT_STRIKES
+            for f in findings
+        ):
+            return
+        session = self.cfg.agent_session_id
+        try:
+            n = self.cfg.control.strike(session)
+            if n < threshold:
+                return
+            reason = f"circuit breaker: {n} calls or results with high findings"
+            self.cfg.control.lock(session, reason)
+        except ControlStoreError as exc:
+            self._control_error("strike not recorded; locking this process's session", exc, tool)
+            n, reason = threshold, "circuit breaker (control store unavailable)"
+            self._local_locks[session] = reason
+        if n == threshold:
+            self.emit.emit(
+                EventType.CONTROL_CIRCUIT_BREAKER,
+                severity=Severity.HIGH,
+                action=EventAction.BLOCKED,
+                tool_name=tool,
+                reason=reason,
+                details={"Strikes": n, "Threshold": threshold},
+            )
+
+    def _spend_budget(self, call: _Call) -> bool:
+        budget = self._controls.approval_budget
+        try:
+            return self.cfg.control.take_prompt(
+                self.cfg.agent_session_id, budget.prompts, budget.minutes * 60.0
+            )
+        except ControlStoreError as exc:
+            self._control_error("approval budget unreadable; not asking", exc, call.name)
+            return False
+
+    def _use_scoped_grant(self, call: _Call) -> str | None:
+        """A live scoped grant for this call, with one use spent; None if there's none."""
+        try:
+            grants = self.cfg.control.grants(server=self.cfg.server_name)
+        except ControlStoreError as exc:
+            self._control_error("grants unreadable; ignoring them", exc, call.name)
+            return None
+        for grant in grants:
+            if not fnmatchcase(call.name, grant.tool):
+                continue
+            try:
+                conditions = parse_conditions(grant.conditions)
+            except ValueError:
+                continue  # a grant we can't read grants nothing
+            if conditions and not all_hold(conditions, call.args):
+                continue
+            try:
+                if self.cfg.control.use_grant(grant.id):
+                    return grant.id
+            except ControlStoreError as exc:
+                self._control_error("grant use not recorded; ignoring it", exc, call.name)
+                return None
+        return None
+
+    def _quarantine(
+        self,
+        pending: Pending,
+        result: dict[str, Any],
+        detectors: str,
+        findings: list[Finding],
+        common: dict[str, Any],
+    ) -> str | None:
+        """Keep a withheld result for review; None if quarantine is off or failed."""
+        if not self._controls.quarantine or pending.call_key is None:
+            return None
+        payload = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        try:
+            qid = self.cfg.control.quarantine(
+                session=self.cfg.agent_session_id,
+                server=self.cfg.server_name,
+                tool=pending.tool_name or "",
+                call_key=pending.call_key,
+                summary=detectors,
+                payload=payload,
+            )
+        except ControlStoreError as exc:
+            self._control_error("result not quarantined (still withheld)", exc, pending.tool_name)
+            return None
+        worst = max((f.severity for f in findings), key=_SEVERITY_RANK.__getitem__)
+        self.emit.emit(
+            EventType.RESPONSE_QUARANTINED,
+            severity=worst,
+            action=EventAction.BLOCKED,
+            reason=f"withheld for review: {detectors}",
+            details={"QuarantineId": qid, "Kept": len(payload) <= MAX_QUARANTINE_BYTES},
+            result_bytes=len(payload),
+            **common,
+        )
+        return qid
+
+    async def _deliver_released(self, call: _Call, call_key: str) -> bool:
+        """Answer a repeated call with its released result, without calling the server."""
+        try:
+            released = self.cfg.control.take_released(
+                self.cfg.agent_session_id, self.cfg.server_name, call_key
+            )
+        except ControlStoreError as exc:
+            self._control_error("released results unreadable", exc, call.name)
+            return False
+        if released is None:
+            return False
+        qid, payload = released
+        try:
+            result = json.loads(payload.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return False
+        if self._flow_mode() is not FlowMode.OFF:
+            # It was withheld for a reason: whoever released it, it's untrusted input.
+            error = self._flow_record(call.name, [Label.UNTRUSTED_INPUT])
+            if error is not None:
+                await self._reply_blocked_tool(call.frame.id, error, call.meta.present)
+                return True
+        self.emit.emit(
+            EventType.RESPONSE_RELEASED,
+            severity=Severity.MEDIUM,
+            action=EventAction.ALLOWED,
+            reason=f"delivered {qid} after human review",
+            details={"QuarantineId": qid},
+            result_bytes=len(payload),
+            **call.common,
+        )
+        await self._reply_result(call.frame.id, result)
+        return True
 
     def _effective_labels(self, tool: str, flow: _FlowCheck) -> frozenset[Label]:
         policy = self.cfg.policy.policy
@@ -970,13 +1184,44 @@ class Router:
         elif verdict.action is Action.REQUIRE_APPROVAL and self._use_grant(call):
             approved = True
             verdict.reasons.append("covered by an approval granted for this exact call")
+        if verdict.action is Action.REQUIRE_APPROVAL and approved is None and verdict.grantable:
+            gid = self._use_scoped_grant(call)
+            if gid is not None:
+                approved = True
+                verdict.reasons.append(f"covered by scoped grant {gid}")
+                verdict.basis = "grant"
+                self.emit.emit(
+                    EventType.APPROVAL_GRANTED,
+                    severity=Severity.LOW,
+                    action=EventAction.APPROVED,
+                    reason=f"scoped grant {gid}",
+                    details={"Channel": "grant", "GrantId": gid},
+                    **call.common,
+                )
 
         if verdict.action is Action.REQUIRE_APPROVAL and approved is None:
-            if call.meta.present:
-                if call.meta.supports_elicitation_form() and self.cfg.state_signer is not None:
-                    await self._ask_approval_mrtr(call, verdict)
-                    return
-            elif self._can_ask_for_approval() and self.task_group is not None:
+            mrtr = (
+                call.meta.present
+                and call.meta.supports_elicitation_form()
+                and self.cfg.state_signer is not None
+            )
+            legacy = (
+                not call.meta.present
+                and self._can_ask_for_approval()
+                and self.task_group is not None
+            )
+            if (mrtr or legacy) and not self._spend_budget(call):
+                verdict.action = Action.BLOCK
+                verdict.basis = "approval_budget"
+                verdict.reasons.append(
+                    "approval budget used up for this session; a human can add a scoped "
+                    "grant (`gatehouse grant add`) instead of approving each call"
+                )
+            elif mrtr:
+                await self._ask_approval_mrtr(call, verdict)
+                return
+            elif legacy:
+                assert self.task_group is not None
                 self.task_group.start_soon(self._finish_call, call, verdict, None)
                 return
         await self._finish_call(call, verdict, approved)
@@ -1081,6 +1326,7 @@ class Router:
             )
         if verdict.flow is not None:
             self._emit_flow(verdict.flow, outcome, call.common)
+        self._maybe_strike(verdict.findings, call.name)
 
         reason = "; ".join(r for r in verdict.reasons if r) or None
         self.emit.emit(
@@ -1098,6 +1344,9 @@ class Router:
         )
 
         if action is Action.ALLOW:
+            call_key = self._grant_key(call)
+            if await self._deliver_released(call, call_key):
+                return
             self.client_pending[frame.id_key] = Pending(
                 method=TOOLS_CALL,
                 request_id=frame.id_key,
@@ -1108,6 +1357,7 @@ class Router:
                 version=call.meta.version,
                 client_caps=call.meta.capabilities,
                 flow_labels=call.flow_labels,
+                call_key=call_key,
             )
             await self.to_server(call.raw)
         else:
@@ -1907,6 +2157,10 @@ class Router:
         # Approval is not possible after the fact: a flagged result is withheld.
         blocked = worst is not Action.ALLOW
         flow_error: str | None = None
+        kill = self._kill_switch()
+        if kill is not None:
+            blocked = True
+            flow_error = f"kill switch engaged: {kill.reason}"
         if not blocked and any(f.detector_id in _INJECTION_DETECTORS for f in findings):
             # Whatever the tool's labels say, a result with injected instructions in it is
             # untrusted input once the agent reads it.
@@ -1943,11 +2197,24 @@ class Router:
             },
             **common,
         )
+        self._maybe_strike(findings, pending.tool_name or "")
         if blocked:
             detectors = ", ".join(sorted({f"{f.detector_id}/{f.rule_id}" for f in findings}))
-            await self._reply_blocked_tool(
-                frame.id, f"tool result withheld ({flow_error or detectors})", pending.modern
-            )
+            qid = None
+            if flow_error is None and result is not None:
+                qid = self._quarantine(pending, result, detectors, findings, common)
+            if qid is not None:
+                await self._reply_tool_text(
+                    frame.id,
+                    f"[gatehouse] Tool result withheld for review (id {qid}): {detectors}. "
+                    f"Ask the user to review it with `gatehouse review show {qid}`. If they "
+                    "release it, repeat the same call to receive it.",
+                    pending.modern,
+                )
+            else:
+                await self._reply_blocked_tool(
+                    frame.id, f"tool result withheld ({flow_error or detectors})", pending.modern
+                )
         else:
             await self.to_client(frame.raw + b"\n")
 
@@ -1972,6 +2239,15 @@ class Router:
 
 _INJECTION_DETECTORS = frozenset({"response.injection", "text.invisible"})
 PROVENANCE_ID = "flow.provenance"
+# Findings about gatehouse's own state, not the agent's behaviour: no breaker strike.
+_NOT_STRIKES = frozenset({"provenance-unavailable"})
+_SEVERITY_RANK = {
+    Severity.INFORMATIONAL: 0,
+    Severity.LOW: 1,
+    Severity.MEDIUM: 2,
+    Severity.HIGH: 3,
+    Severity.CRITICAL: 4,
+}
 
 
 def _shape(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import re
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
@@ -62,13 +63,39 @@ def protected_variants(
     return tuple(sorted(v for v in variants if len(v) > 3))
 
 
+# Response-control commands an agent must not run on itself (D-044): reading or releasing
+# quarantined content, unlocking its session, granting itself approvals, releasing the
+# kill switch. Linear: a literal anchor, then fixed alternations.
+_CONTROL_COMMAND = re.compile(
+    r"\bgatehouse(?:\.exe)?[\"']?\s+"
+    r"(?:review\s+(?:show|release|discard)|grant\s+(?:add|revoke)|unlock|kill\s+--off)\b",
+    re.IGNORECASE,
+)
+MAX_COMMAND_SCAN = 64 * 1024
+
+
 def detect_self_protect(
     arguments: object, protected: tuple[str, ...], stats: WalkStats | None = None
 ) -> list[Finding]:
     findings: list[Finding] = []
-    if not protected:
-        return findings
     for where, text in iter_strings(arguments, "arguments", stats, include_keys=False):
+        m = _CONTROL_COMMAND.search(text[:MAX_COMMAND_SCAN])
+        if m is not None:
+            findings.append(
+                Finding(
+                    detector_id=DETECTOR_ID,
+                    rule_id="gatehouse-control-command",
+                    severity=Severity.HIGH,
+                    summary="argument runs a gatehouse control command that is for a human "
+                    f"({' '.join(m.group(0).split()[1:3]).casefold()})",
+                    location=where,
+                    mitre=("AML.T0081", "T1562.001"),
+                    owasp=("LLM06",),
+                )
+            )
+            continue
+        if not protected:
+            continue
         candidate = _normpath(text)
         for p in protected:
             if p in candidate:

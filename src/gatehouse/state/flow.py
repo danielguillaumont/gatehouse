@@ -15,8 +15,8 @@ Failures:
 
 - reads fail closed: if the store can't be read, ``labels`` raises and the router
   treats the session as holding every label;
-- writes keep the fact in this process's memory and raise, so the router can emit
-  ``gatehouse.fail_open`` (other processes won't see the fact).
+- writes keep the fact in this process's memory and raise, and the router blocks the
+  call (or withholds the result) that needed it (other processes won't see the fact).
 """
 
 from __future__ import annotations
