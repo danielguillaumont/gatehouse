@@ -1,0 +1,38 @@
+{
+  "generator_version": 1,
+  "sha256": {
+    "seeds.yaml": "ef8a5c0da4a1a721471c3f908176dbce7eeccad91409fee5d7e5cd3f0d0527b2",
+    "mutate.py": "237d422bc125f977e98523e7f3ff7111e065a65e6a2d93893b7af6b66f757427",
+    "llm.json": "d4860284f55e71a814ecca0dda1ff914c7d0c260e2e82fe6cdb59f63477d6b61",
+    "scenarios/heldout2.yaml": "e0cf3806cdc3332637709cb58b65ea5008548950e4bdc68052729c2d45f439ec"
+  },
+  "counts": {
+    "attacks": 330,
+    "benign": 119,
+    "attacks_by_operator": {
+      "base64": 25,
+      "encoded-command": 5,
+      "hex": 9,
+      "homoglyph": 25,
+      "ifs": 4,
+      "invisible": 22,
+      "lexical": 13,
+      "llm-paraphrase": 15,
+      "llm-translate-de": 14,
+      "llm-translate-es": 14,
+      "markup": 25,
+      "nested": 34,
+      "path-case": 1,
+      "path-dot": 4,
+      "path-dotdot": 4,
+      "path-double-sep": 4,
+      "path-env": 3,
+      "percent": 13,
+      "rot13": 16,
+      "seed": 34,
+      "shell-quote": 5,
+      "split": 25,
+      "upper": 16
+    }
+  }
+}

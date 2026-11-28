@@ -2,6 +2,7 @@
 
     python -m attacks run --target gatehouse --out reports/gatehouse [--only ID ...]
     python -m attacks run --target direct --out reports/direct
+    python -m attacks run --scenarios attacks/heldout2/scenarios --out reports/heldout2
     python -m attacks canary-check reports/gatehouse
     python -m attacks http --target gatehouse --out reports/gatehouse-http
     python -m attacks flow --out reports/flow   # flow.* chains under every flow.mode
@@ -21,7 +22,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from attacks.harness import FLOW_MODES, approvals_asked, load_scenarios, run_scenario
+from attacks.harness import (
+    FLOW_MODES,
+    HELDOUT,
+    SCENARIO_DIR,
+    approvals_asked,
+    load_scenarios,
+    run_scenario,
+)
 from attacks.report import Result, build_report, judge, render_markdown, write_report
 from attacks.targets import TARGETS
 
@@ -42,7 +50,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     out: Path = args.out
     (out / "evidence").mkdir(parents=True, exist_ok=True)
     results: list[Result] = []
-    for sc in load_scenarios(only=args.only or ()):
+    for sc in load_scenarios(args.scenarios, only=args.only or ()):
         if not sc.applies_to(target.name):
             continue
         obs = run_scenario(sc, target)
@@ -66,14 +74,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     write_report(out, report)
     if args.summary:
         _err(render_markdown(report))
-    # The held-out set (milestone m3) is a measurement, not a regression gate: gating on it
-    # would push rules to be tuned against it, which is exactly what it exists to avoid
-    # (D-032). A broken held-out scenario still fails.
+    # The held-out sets (milestones m3 and m6) are a measurement, not a regression gate:
+    # gating on them would push rules to be tuned against them, which is exactly what they
+    # exist to avoid (D-032). A broken held-out scenario still fails.
     failures = [
         r
         for r in results
         if r.outcome == "broken"
-        or (r.outcome == "false_positive" and r.milestone != "m3")
+        or (r.outcome == "false_positive" and r.milestone not in HELDOUT)
         or (target.name == "gatehouse" and r.milestone == "mvp" and r.outcome == "missed")
     ]
     if target.name == "direct":
@@ -161,7 +169,7 @@ def _flow_markdown(rows: list[dict[str, Any]], meta: dict[str, Any]) -> str:
 
 def cmd_canary_check(args: argparse.Namespace) -> int:
     root: Path = args.dir
-    canaries = {sc.id: sc.canaries for sc in load_scenarios() if sc.canaries}
+    canaries = {sc.id: sc.canaries for sc in load_scenarios(args.scenarios) if sc.canaries}
     leaks: list[str] = []
     for path in sorted((root / "evidence").glob("*/*")):
         if path.name == CLIENT_VIEW:
@@ -184,9 +192,16 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--target", choices=sorted(TARGETS), default="gatehouse")
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--only", nargs="*", help="scenario ids or id prefixes")
+    r.add_argument(
+        "--scenarios",
+        type=Path,
+        default=SCENARIO_DIR,
+        help="scenario directory (held-out v2: attacks/heldout2/scenarios)",
+    )
     r.add_argument("--summary", action="store_true", help="also print report.md to stderr")
     c = sub.add_parser("canary-check")
     c.add_argument("dir", type=Path)
+    c.add_argument("--scenarios", type=Path, default=SCENARIO_DIR)
     fl = sub.add_parser("flow", help="flow.* scenarios under monitor, approve and enforce")
     fl.add_argument("--out", type=Path, required=True)
     h = sub.add_parser("http", help="Streamable HTTP scenarios (attacks/http_scenarios.yaml)")

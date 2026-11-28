@@ -399,7 +399,8 @@ def _arguments(seed: Seed, v: Variant) -> tuple[dict[str, Any], dict[str, Any]]:
     """(call arguments, inputSchema)."""
     param = seed.param or "value"
     if v.shape == "split":
-        a, b = _halves(v.text) if " " in v.text else (v.text[: len(v.text) // 2], v.text[len(v.text) // 2 :])
+        cut = len(v.text) // 2
+        a, b = _halves(v.text) if " " in v.text else (v.text[:cut], v.text[cut:])
         args: dict[str, Any] = {param: a, f"{param}_continued": b}
     elif v.shape == "nested":
         args = {param: {"data": {"value": v.text}}}
@@ -480,6 +481,8 @@ def scenario(seed: Seed, v: Variant) -> dict[str, Any]:
         if needle not in _dump(where):
             raise ValueError(f"{sid}: needle {needle!r} not in the payload")
         sc["success_if"] = {check: {"tool": tool, "contains": needle}}
+        if seed.category == "secrets_in_args" and seed.marker is not None:
+            sc["canaries"] = [seed.marker]  # must never reach gatehouse's own logs
     return sc
 
 
@@ -523,8 +526,10 @@ def render(scenarios: list[dict[str, Any]]) -> str:
         "# Frozen held-out v2 (D-046): do not edit, do not regenerate, do not tune rules on\n"
         "# it. MANIFEST.json holds the hashes that tests/attacks/test_heldout2.py checks.\n"
     )
-    body = yaml.safe_dump(scenarios, allow_unicode=True, sort_keys=False, width=100)
-    return header + body
+    # JSON is valid YAML, and unlike yaml.safe_dump its output doesn't depend on the
+    # PyYAML version, so the hash stays stable. Non-ASCII stays escaped (​ etc.), so
+    # invisible characters are visible in a diff.
+    return header + json.dumps(scenarios, ensure_ascii=True, indent=1) + "\n"
 
 
 def _counts(scenarios: list[dict[str, Any]]) -> dict[str, Any]:

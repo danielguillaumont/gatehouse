@@ -67,6 +67,14 @@ jobs:
         run: |
           uv run python -m attacks flow --out reports/flow
           cat reports/flow/flow.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Held-out v2 (frozen, measured only; D-046)
+        run: |
+          uv run python -m attacks.heldout2.mutate --check
+          H2=attacks/heldout2/scenarios
+          uv run python -m attacks run --target direct --scenarios $H2 --out reports/heldout2-direct
+          uv run python -m attacks run --target gatehouse --scenarios $H2 --out reports/heldout2
+          uv run python -m attacks canary-check reports/heldout2 --scenarios $H2
+          cat reports/heldout2/report.md >> "$GITHUB_STEP_SUMMARY"
       - name: HTTP scenarios (baseline and gatehouse)
         run: |
           uv run python -m attacks http --target direct --out reports/direct-http

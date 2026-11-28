@@ -1,0 +1,15 @@
+{
+  "model": "qwen2.5:7b",
+  "options": {
+    "temperature": 0,
+    "seed": 7
+  },
+  "generated_at": "2026-11-28T03:43:12+00:00",
+  "rewrites": 84,
+  "kept_marker": 79,
+  "dropped_marker": 5,
+  "ollama": "0.40.16",
+  "model_license": "Apache-2.0",
+  "ollama_model_layer": "sha256:2bada8a74506",
+  "workflow_run": "https://github.com/danielguillaumont/gatehouse/actions/runs/46102494282"
+}

@@ -13,3 +13,4 @@ htmlcov/
 gatehouse.lock.local
 reports/
 demo/.poisoned
+.cache/

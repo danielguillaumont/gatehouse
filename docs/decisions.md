@@ -776,3 +776,78 @@ benign task". Measuring that honestly needed these choices:
   fails if a chain completes in approve or enforce, or if a benign task fails in
   monitor or approve. Enforce is expected to block the three-property benign tasks, and
   the table reports that.
+
+**D-046 (2026-11-28) Held-out v2: written seeds, a deterministic mutation engine and
+frozen model rewrites, hashed before any M6 detector change.** The M3 held-out set (18
+hand-written attacks) was too small to say much. Its misses are now public and are what
+the M6 rule fixes address, so measuring those fixes on it would make it a tuning set
+(D-032).
+- **Seeds first.** `attacks/heldout2/seeds.yaml` has 34 attack seeds and 20 benign ones,
+  written on 2026-11-28 after v0.2.0 and committed (`d8643f5`) before any M6 code. Each
+  attack seed has a `marker`: the attacker's goal (an address, a host, a path, a
+  secret).
+- **Deterministic operators** (`attacks/heldout2/mutate.py`):
+  - lexical substitution from a fixed table;
+  - zero-width characters, Cyrillic homoglyphs and upper case, all outside the marker;
+  - base64, ROT13, hex and percent encoding;
+  - splitting across content blocks, schema fields or arguments; nesting in
+    structured content or objects; HTML comments, `<details>` and code fences;
+  - for shell commands: `r''m`, `${IFS}`, `base64 -d | sh` and PowerShell
+    `-EncodedCommand`;
+  - for paths: `/./`, `x/../`, doubled separators, case and `$HOME`.
+
+  Meaning-preserving operators keep the marker verbatim. Encodings change it, and their
+  success condition is a slice of the encoded payload.
+- **Model rewrites.** A paraphrase, a German and a Spanish version of every prose seed
+  come from Qwen2.5 7B (Apache-2.0) on Ollama 0.40.16, at temperature 0 and seed 7.
+  - They were generated once in the `heldout2-llm` workflow
+    ([run 46102494282](https://github.com/danielguillaumont/gatehouse/actions/runs/46102494282))
+    and committed as `llm.json`.
+  - 79 of 84 rewrites kept the marker. The other 5 are dropped, not repaired.
+- **Frozen.** `MANIFEST.json` holds the SHA-256 of the seeds, the generator, `llm.json`
+  and the output (CRLF folded to LF).
+  - `tests/attacks/test_heldout2.py` and `mutate --check` in CI fail if any of them
+    changes, or if the generator no longer reproduces the output.
+  - Result: 330 attacks and 119 benign scenarios, milestone `m6`, kept out of the main
+    suite.
+  - Like `m3`, it's measured and never gated: a false positive here doesn't fail CI.
+- **Honest limits.**
+  - The seeds were written by the same author as the detectors, so they're less
+    independent than an outside set. The external corpora (D-047) cover that.
+  - The lexical table is a weak paraphrase. The model rewrites are the real one.
+  - The mutation operators were chosen knowing which kinds of evasion exist. They
+    weren't chosen knowing which ones gatehouse misses: no gatehouse run informed them.
+    Only one seed's variants were run, as a smoke test of the generator.
+- **Alternatives:**
+  - generating at test time: rejected, because a mutation engine that can change can
+    be tuned against;
+  - committing the model weights or running the model locally: rejected, because the
+    output is what has to be frozen, not the model.
+
+**D-047 (2026-11-28) External corpora are fetched at pinned commits in CI and converted,
+never committed.**
+- **MCPTox** (zhiqiangwang4/MCPTox-Benchmark at `630121b`):
+  - its benchmark data is CC BY 4.0 "to the extent the MCPTox contributors hold the
+    rights", and the authentic tool definitions come from third-party servers. So
+    nothing is committed;
+  - `python -m attacks.external prepare` downloads `pure_tool.json` and
+    `response_all.json`, checks pinned SHA-256 digests, and converts them;
+  - **485 poisoned tools** each become one listing scenario next to their server's
+    authentic tools;
+  - **362 authentic tools** each become one benign listing scenario. That's the
+    real-definition part of the 200+ benign corpus.
+- **agent-egress-bench** (v1.2.0, commit `451a5db`, Apache-2.0): only the `mcp_stdio`
+  cases are converted, 32 attacks and 12 benign. 28 are skipped and listed in
+  `SOURCES.json`:
+  - `mcp_http` transport;
+  - call-budget cases;
+  - `initialize` instructions, which the mock server doesn't serve;
+  - one tool with no name.
+
+  The digest covers every case file, so a changed corpus fails `prepare`.
+- **Changes from the originals** are listed in the `attacks/external.py` docstring, as
+  CC BY requires: each case is re-expressed as a scripted stdio scenario, and success
+  is "the client or server received the payload unchanged". That's stricter for
+  gatehouse than the corpora's own verdicts: a `warn` doesn't count.
+- **Alternative:** vendoring a subset. Rejected, because of the third-party rights in
+  the authentic definitions.

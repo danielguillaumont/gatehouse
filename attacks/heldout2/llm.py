@@ -49,10 +49,11 @@ def _generate(host: str, model: str, prompt: str) -> str:
             "options": {"temperature": 0, "seed": 7, "num_predict": 400},
         }
     ).encode()
-    req = urllib.request.Request(
-        f"{host}/api/generate", data=body, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310 (local Ollama)
+    url = f"{host}/api/generate"
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"OLLAMA_HOST must be an http(s) URL, not {host!r}")
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})  # noqa: S310
+    with urllib.request.urlopen(req, timeout=600) as resp:  # noqa: S310 (scheme checked)
         data = cast(dict[str, Any], json.loads(resp.read()))
     return str(data.get("response", "")).strip()
 
