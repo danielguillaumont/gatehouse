@@ -209,13 +209,59 @@ def render(data: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def verdict_latency(root: Path) -> dict[str, Any]:
+    """Classifier verdict latency from ``classifier.verdict`` events in the evidence of
+    every ``gatehouse__<layers>__*`` report under ``root``.
+
+    The bench can't measure a judge layer: once the judge withholds a few results the
+    circuit breaker locks the session, and later calls never reach the model. Real
+    verdicts from the scenario runs can, so this reads their LatencyMs."""
+    by_layer: dict[str, list[float]] = {}
+    errors: dict[str, int] = {}
+    for events in sorted(root.glob("gatehouse__*__*/evidence/*/events.jsonl")):
+        layers = events.parents[2].name.split("__")[1]
+        for line in events.read_text(encoding="utf-8").splitlines():
+            try:
+                event = cast(dict[str, Any], json.loads(line))
+            except ValueError:
+                continue
+            if event.get("EventType") != "classifier.verdict":
+                continue
+            latency = event.get("LatencyMs")
+            if isinstance(latency, (int, float)):
+                by_layer.setdefault(layers, []).append(float(latency))
+            details = cast(dict[str, Any], event.get("Details") or {})
+            if details.get("Error"):
+                errors[layers] = errors.get(layers, 0) + 1
+    out: dict[str, Any] = {}
+    for layers, values in sorted(by_layer.items()):
+        values.sort()
+
+        def pct(q: float, v: list[float] = values) -> float:
+            return round(v[min(len(v) - 1, int(q * len(v)))], 1)
+
+        out[layers] = {
+            "verdicts": len(values),
+            "p50": pct(0.50),
+            "p95": pct(0.95),
+            "max": round(values[-1], 1),
+            "errors": errors.get(layers, 0),
+        }
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="python -m attacks.evaluate")
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("collate")
     c.add_argument("root", type=Path)
     c.add_argument("--out", type=Path, required=True)
+    v = sub.add_parser("verdict-latency", help="classifier verdict latency from evidence")
+    v.add_argument("root", type=Path)
     args = p.parse_args(argv)
+    if args.cmd == "verdict-latency":
+        sys.stdout.write(json.dumps(verdict_latency(args.root), indent=2) + "\n")
+        return 0
     data = collate(args.root)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "evaluation.json").write_text(json.dumps(data, indent=2), encoding="utf-8")

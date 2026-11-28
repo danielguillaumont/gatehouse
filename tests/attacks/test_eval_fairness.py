@@ -76,3 +76,18 @@ def test_judge_layer_is_a_valid_policy() -> None:
     text = apply(Path("attacks/policy-eval.yaml").read_text("utf-8"), "judge")
     (judge,) = parse_policy(text).classifiers
     assert judge.mode.value == "enforce" and judge.kind.value == "ollama"
+
+
+def test_verdict_latency_reads_classifier_events(tmp_path: Path) -> None:
+    from attacks.evaluate import verdict_latency
+
+    ev = tmp_path / "gatehouse__judge__suite.0" / "evidence" / "s1"
+    ev.mkdir(parents=True)
+    rows = [
+        {"EventType": "classifier.verdict", "LatencyMs": ms, "Details": {"Error": err}}
+        for ms, err in ((100.0, None), (300.0, None), (900.0, "timeout"))
+    ] + [{"EventType": "tool.result", "LatencyMs": 5.0}]
+    (ev / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), "utf-8")
+    out = verdict_latency(tmp_path)["judge"]
+    assert out["verdicts"] == 3 and out["p50"] == 300.0 and out["max"] == 900.0
+    assert out["errors"] == 1
