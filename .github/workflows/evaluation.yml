@@ -5,6 +5,7 @@ name: evaluation
 # - ablation: gatehouse under each layer combination (attacks/layers.py) x each set
 # - baseline: no proxy, so a broken scenario shows up
 # - compare: other gateways, installed on the throwaway runner only (D-021)
+# - judge: the judge layer (a local LLM judge, CPU only), sharded
 # - latency: the benchmark under each layer combination, one runner, one after the other
 # - collate: builds evaluation.md from all of the above
 on:
@@ -163,6 +164,73 @@ jobs:
           name: ${{ matrix.target }}__-__${{ matrix.set }}
           path: reports/
 
+  # The judge layer (attacks/layers.py): full + a local LLM judge (Ollama, Qwen2.5 1.5B
+  # Instruct, Apache-2.0) in enforce mode on tool results. CPU only, so the slow sets are
+  # sharded and the client waits longer per response. Only suite and held-out v2: the
+  # judge reads results, and MCPTox (definitions) and egress-bench (arguments) have none
+  # for it to read.
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {set: suite, shard: 0, of: 2}
+          - {set: suite, shard: 1, of: 2}
+          - {set: heldout2, shard: 0, of: 4}
+          - {set: heldout2, shard: 1, of: 4}
+          - {set: heldout2, shard: 2, of: 4}
+          - {set: heldout2, shard: 3, of: 4}
+    env:
+      OLLAMA_VERSION: v0.40.17
+      # from the release's sha256sum.txt, checked 2026-11-28
+      OLLAMA_SHA256: 1df9d6228bac5a22e420b242708c0d10e5b886db97bab99d446a41760f4e79af
+      OLLAMA_HOST: 127.0.0.1:11434
+      ATTACK_CLIENT_TIMEOUT: "120"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked --all-extras
+      - name: Install Ollama (pinned release, checksum verified)
+        run: |
+          d="$RUNNER_TEMP/ollama"; mkdir -p "$d"; cd "$d"
+          base="https://github.com/ollama/ollama/releases/download/$OLLAMA_VERSION"
+          curl -fsSLO "$base/ollama-linux-amd64.tar.zst"
+          echo "$OLLAMA_SHA256  ollama-linux-amd64.tar.zst" | sha256sum -c
+          tar --zstd -xf ollama-linux-amd64.tar.zst
+          echo "$d/bin" >> "$GITHUB_PATH"
+      - name: Start Ollama and pull the judge model
+        run: |
+          nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 60); do curl -fsS "http://$OLLAMA_HOST/api/version" && break; sleep 1; done
+          model=$(uv run python -c "from attacks.layers import JUDGE_MODEL; print(JUDGE_MODEL)")
+          ollama pull "$model"
+          { echo "ollama $OLLAMA_VERSION"; ollama list; } > judge-freeze.txt
+          cat judge-freeze.txt
+          curl -fsS "http://$OLLAMA_HOST/api/generate" -d "{\"model\": \"$model\", \"prompt\": \"ok\", \"stream\": false, \"options\": {\"num_predict\": 1}}" > /dev/null
+      - name: Run
+        run: |
+          case "${{ matrix.set }}" in
+            suite) dir=attacks/scenarios ;;
+            heldout2) uv run python -m attacks.heldout2.mutate --check; dir=attacks/heldout2/scenarios ;;
+          esac
+          out="reports/gatehouse__judge__${{ matrix.set }}.${{ matrix.shard }}"
+          uv run python -m attacks run --target gatehouse --layers judge --scenarios "$dir" \
+            --shard "${{ matrix.shard }}/${{ matrix.of }}" --out "$out" 2> run.log || true
+          tail -n 5 run.log
+          uv run python -m attacks canary-check "$out" --scenarios "$dir"
+          cp judge-freeze.txt "$out/"
+      - name: Judge latency (1 KiB results, fewer iterations)
+        if: matrix.set == 'suite' && matrix.shard == 0
+        run: uv run python -m bench.latency --iterations 30 --sizes 1024 --layers judge --out reports/bench-judge
+      - uses: actions/upload-artifact@v5
+        with:
+          name: gatehouse__judge__${{ matrix.set }}.${{ matrix.shard }}
+          path: reports/
+
   latency:
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -183,7 +251,7 @@ jobs:
           path: reports/
 
   collate:
-    needs: [ablation, baseline, compare, latency]
+    needs: [ablation, baseline, compare, judge, latency]
     if: always()
     runs-on: ubuntu-latest
     steps:

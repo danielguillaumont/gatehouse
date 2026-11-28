@@ -7,6 +7,7 @@ A scenario has one or more *phases*; each phase is a fresh client + target proce
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sys
@@ -29,6 +30,9 @@ MILESTONES = ("mvp", "m2", "m3", "m4", "m5", "m6", "m6-rules", "external", "bypa
 # Held-out sets and external corpora: measured, never a regression gate and never a
 # tuning target (D-032, D-046, D-047).
 HELDOUT = ("m3", "m6", "external")
+# Seconds the simulated client waits for each response. The judge layer raises it
+# in CI: a CPU-only model needs seconds per verdict (attacks/layers.py).
+CLIENT_TIMEOUT = float(os.environ.get("ATTACK_CLIENT_TIMEOUT") or 20)
 PREDICATES = (
     "client_saw_tool",
     "client_saw_result",
@@ -207,6 +211,34 @@ def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _schema_equivalent(schema: Any) -> Any:
+    """A JSON Schema without the no-op keywords a proxy may add when it rebuilds one: an
+    empty ``required`` list and empty ``description`` strings (D-051). Anything else a
+    target changes still counts."""
+    if isinstance(schema, dict):
+        out: dict[str, Any] = {}
+        for key, value in cast(dict[str, Any], schema).items():
+            if (key == "required" and value == []) or (key == "description" and value == ""):
+                continue
+            out[key] = _schema_equivalent(value)
+        return out
+    if isinstance(schema, list):
+        return [_schema_equivalent(v) for v in cast(list[Any], schema)]
+    return schema
+
+
+def _listing(tools: list[dict[str, Any]]) -> str:
+    """A tool listing for comparison: schemas up to no-op keywords, the rest exact."""
+    normalized = [
+        {
+            k: (_schema_equivalent(v) if k in ("inputSchema", "outputSchema") else v)
+            for k, v in t.items()
+        }
+        for t in tools
+    ]
+    return _dump(normalized)
+
+
 def _substitute(value: Any, mapping: Mapping[str, str]) -> Any:
     if isinstance(value, str):
         for k, v in mapping.items():
@@ -332,7 +364,7 @@ def _run_multi(
                     "ATTACK_SPEC": str(spec_path),
                     "ATTACK_LOG": str(tmp / f"log-{name}.jsonl"),
                 },
-                timeout=20,
+                timeout=CLIENT_TIMEOUT,
                 on_server_request=user.server_request,
             )
             clients[name] = client
@@ -431,7 +463,7 @@ def run_scenario(
             client = StdioClient(
                 argv,
                 env={**env, "ATTACK_SPEC": str(spec_path)},
-                timeout=20,
+                timeout=CLIENT_TIMEOUT,
                 on_server_request=user.server_request,
             )
             try:
@@ -555,7 +587,7 @@ def benign_interference(sc: Scenario, obs: Observation) -> list[str]:
         for step in phase.steps:
             if step == "list":
                 seen: list[dict[str, Any]] = next(lists, cast(list[dict[str, Any]], []))
-                if _dump(seen) != _dump(offered):
+                if _listing(seen) != _listing(offered):
                     names = {t.get("name") for t in seen}
                     hidden = [t.get("name") for t in offered if t.get("name") not in names]
                     problems.append(f"tools/list altered (hidden: {hidden})")
@@ -584,7 +616,7 @@ def _multi_interference(sc: Scenario, obs: Observation) -> list[str]:
         for s in sc.servers.values()
     ]
     for seen, offered in zip(obs.lists, expected_lists, strict=False):
-        if _dump(seen) != _dump(offered):
+        if _listing(seen) != _listing(offered):
             problems.append("tools/list altered")
     for c in obs.calls:
         expected = _expected_result(sc.servers[c["server"]], c["tool"])

@@ -12,6 +12,8 @@ or ``attacks/policy-flow.yaml`` for the flow.* chains) and into the benchmark po
   logging. That's what is left if every content rule is evaded.
 - ``full``: detectors, pinning and flow control (approve). This is the default for
   ``flow.*`` scenarios, and adds flow control to the eval policy.
+- ``judge``: ``full`` plus a local LLM judge (Ollama) that must clear every tool
+  result (``enforce``). Runs only where Ollama is installed (the CI job does that).
 
 Response controls (quarantine, the circuit breaker) stay at their defaults in every
 row. They act on findings, so a row whose detectors only log never triggers them.
@@ -39,6 +41,19 @@ _ENFORCE = {
     "informational": "log",
 }
 
+# The judge layer: ``full`` plus a local LLM judge in enforce mode on tool results
+# (ADR-0007). Qwen2.5 1.5B Instruct is Apache-2.0 and runs on a CPU runner. The
+# budget is generous because CI has no GPU; the latency table says what it costs.
+JUDGE_MODEL = "qwen2.5:1.5b"
+_JUDGE: dict[str, Any] = {
+    "id": "judge",
+    "kind": "ollama",
+    "model": JUDGE_MODEL,
+    "mode": "enforce",
+    "applies_to": ["results"],
+    "budget_ms": 60000,
+}
+
 LAYERS: dict[str, dict[str, Any]] = {
     "observe": {"pinning": "off", "findings": _LOG_ONLY, "flow": {"mode": "off"}},
     "pinning": {"pinning": "tofu", "findings": _LOG_ONLY, "flow": {"mode": "off"}},
@@ -46,7 +61,15 @@ LAYERS: dict[str, dict[str, Any]] = {
     "v0.1": {"pinning": "tofu", "findings": _ENFORCE, "flow": {"mode": "off"}},
     "structural": {"pinning": "tofu", "findings": _LOG_ONLY, "flow": {"mode": "approve"}},
     "full": {"pinning": "tofu", "findings": _ENFORCE, "flow": {"mode": "approve"}},
+    "judge": {
+        "pinning": "tofu",
+        "findings": _ENFORCE,
+        "flow": {"mode": "approve"},
+        "classifiers": [_JUDGE],
+    },
 }
+# Layers that need more than the repo: the judge needs a local Ollama with JUDGE_MODEL.
+NEEDS_OLLAMA = frozenset({"judge"})
 
 
 def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:

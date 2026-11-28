@@ -43,6 +43,17 @@ def _safe(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_." else "_" for c in name)
 
 
+def _shard(spec: str | None) -> tuple[int, int]:
+    """``k/n``: run every n-th scenario starting at k (for slow layers in CI)."""
+    if not spec:
+        return 0, 1
+    k, _, n = spec.partition("/")
+    shard, shards = int(k), int(n)
+    if not 0 <= shard < shards:
+        raise SystemExit(f"--shard {spec}: need 0 <= k < n")
+    return shard, shards
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     target = TARGETS[args.target]
     if not target.available():
@@ -51,8 +62,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     out: Path = args.out
     (out / "evidence").mkdir(parents=True, exist_ok=True)
     results: list[Result] = []
-    for sc in load_scenarios(args.scenarios, only=args.only or ()):
-        if not sc.applies_to(target.name):
+    shard, shards = _shard(args.shard)
+    for index, sc in enumerate(load_scenarios(args.scenarios, only=args.only or ())):
+        if not sc.applies_to(target.name) or index % shards != shard:
             continue
         obs = run_scenario(sc, target, layers=args.layers)
         res = judge(sc, obs)
@@ -207,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         help="scenario directory (held-out v2: attacks/heldout2/scenarios)",
     )
     r.add_argument("--summary", action="store_true", help="also print report.md to stderr")
+    r.add_argument("--shard", help="k/n: run only every n-th scenario, from the k-th")
     r.add_argument(
         "--layers",
         choices=sorted(LAYERS),

@@ -1002,3 +1002,35 @@ fixes, each with attack scenarios and benign twins in `attacks/scenarios/rules_m
     regression check only.
 - **Not fixed:** plain links with data in the query (they need a click) and rot13.
   Both are still documented as bypasses.
+
+**D-053 (2026-11-28) Benign listings are compared up to no-op schema keywords, and a
+judge layer is measured in CI.**
+- **Listing comparison.**
+  - *What happened.* Run
+    [46106751618](https://github.com/danielguillaumont/gatehouse/actions/runs/46106751618)
+    scored mcp-context-protector at 66.9% false positives. 344 of its 349 were "tools/list
+    altered". It rebuilds each schema and adds `"required": []` and
+    `"description": ""` to every property, which changes nothing about what a client
+    may send.
+  - *Decision.* Benign listings now compare equal when the only difference is an empty
+    `required` list or an empty `description` inside `inputSchema` or `outputSchema`
+    (`attacks/harness.py::_listing`). Everything else still counts, including a
+    changed tool description, a new `required` entry, a changed type or added
+    annotations. The same rule applies to every target. gatehouse and direct are
+    unaffected, since neither rewrites schemas.
+  - *Alternative.* A target-specific normalizer for mcp-context-protector. Rejected:
+    "equivalent schema" is a property of JSON Schema, not of one tool.
+- **Judge layer.**
+  - *Decision.* `judge` = `full` plus an Ollama judge in `enforce` mode on tool
+    results. The model is Qwen2.5 1.5B Instruct (Apache-2.0, verified on its Hugging
+    Face card on 2026-11-28), and it runs on a CPU runner (Ollama v0.40.17, with the
+    tarball's sha256 pinned in the workflow).
+  - *Scope.* It covers suite and held-out v2 only. The judge reads results, while
+    MCPTox attacks tool definitions and egress-bench attacks arguments.
+  - *Sharding.* The sets are sharded (`attacks run --shard k/n`), and
+    `attacks.evaluate` merges `<set>.<k>` reports.
+  - *Why measure it at all.* The roadmap names an Ollama judge. ADR-0007 says no
+    classifier number is claimed unmeasured, and this is the one model CI can run
+    without a gated download.
+  - *Alternative.* Prompt Guard 2 in CI. Rejected: it is gated behind a Hugging Face
+    token.

@@ -52,8 +52,16 @@ def load_reports(root: Path) -> dict[tuple[str, str, str], dict[str, Any]]:
     for path in sorted(root.glob("*__*__*/report.json")):
         target, layers, set_name = path.parent.name.split("__")
         report = _load(path)
-        if report is not None:
-            out[(target, layers, set_name)] = report
+        if report is None:
+            continue
+        # ``<set>.<k>``: one shard of a set run with --shard; shards are merged
+        base = set_name.split(".", 1)[0]
+        key = (target, layers, base)
+        if key in out:
+            merged = _results(out[key]) + _results(report)
+            out[key] = {**out[key], "results": merged}
+        else:
+            out[key] = report
     return out
 
 
