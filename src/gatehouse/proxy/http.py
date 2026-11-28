@@ -46,9 +46,11 @@ from gatehouse.protocol import (
     HEADER_MISMATCH,
     INITIALIZE,
     INTERNAL_ERROR,
+    INVALID_PARAMS,
     INVALID_REQUEST,
     JSONRPC_VERSION,
     META_PROTOCOL_VERSION,
+    MODERN_VERSIONS,
     PARSE_ERROR,
     PINNED_SPEC_VERSION,
     TOOLS_CALL,
@@ -80,6 +82,9 @@ _STATUS = {
 # Client headers worth passing upstream (tracing only). Everything else is dropped.
 _FORWARD = ("traceparent", "tracestate")
 MAX_LEGACY_SESSIONS = 1024
+# Resuming an upstream SSE stream that closed before answering (2025-11-25 polling).
+MAX_RESUMES = 5
+MAX_RETRY_WAIT_S = 2.0
 
 
 @dataclass
@@ -107,6 +112,16 @@ def _host_of(value: str) -> str:
     if host.startswith("["):
         return host[1 : host.find("]")].lower() if "]" in host else host.lower()
     return host.split(":", 1)[0].lower()
+
+
+@dataclass
+class _StreamEnd:
+    """How an upstream SSE stream ended."""
+
+    answered: bool = False
+    oversized: bool = False
+    last_event_id: str | None = None
+    retry_ms: int | None = None
 
 
 def _sse_events(lines: list[str]) -> str | None:
@@ -240,10 +255,27 @@ class HttpProxy:
             return
         obj = as_obj(parsed)
         meta = as_obj((as_obj(obj.get("params")) or {}).get("_meta")) if obj else None
-        modern = meta is not None and META_PROTOCOL_VERSION in meta
+        enveloped = meta is not None and META_PROTOCOL_VERSION in meta
+        # A 2026-07-28 header marks a 2026-07-28 request even when its envelope is broken:
+        # such a request is answered as a 2026-07-28 server answers it (-32602), never
+        # re-labelled as a legacy request and sent upstream without a session.
+        modern = enveloped or headers.get(hh.PROTOCOL_VERSION) in MODERN_VERSIONS
         rpc_method = as_str(obj.get("method")) if obj else None
         rid = obj.get("id") if obj else None
         is_request = rpc_method is not None and obj is not None and "id" in obj
+
+        if modern and not enveloped and is_request:
+            self.emit.emit(
+                EventType.PROTOCOL_INVALID_META,
+                severity=Severity.LOW,
+                action=EventAction.BLOCKED,
+                direction=Direction.CLIENT_TO_SERVER,
+                method=rpc_method,
+                reason="2026-07-28 request without io.modelcontextprotocol/protocolVersion",
+            )
+            msg = "params._meta must carry io.modelcontextprotocol/protocolVersion"
+            await _json(send, 400, _error(rid, INVALID_PARAMS, msg))
+            return
 
         if modern and is_request:
             assert obj is not None
@@ -402,13 +434,14 @@ class _Channel:
                     return
                 if ctype == "text/event-stream":
                     self.streamed = True
-                    await self._read_sse(resp)
+                    end = await self._read_sse(resp, rid)
+                    await self._finish_stream(rid, end)
                 elif ctype == "application/json":
                     raw = await self._read_capped(resp)
                     if raw is None:
                         await self._fail(rid, "upstream response too large")
                     elif raw.strip():
-                        await self.router.handle_server_line(raw)
+                        await self.router.handle_server_line(_attribute(raw, rid))
                     else:
                         await self._fail(rid, f"upstream answered {resp.status_code} with no body")
                 else:
@@ -430,16 +463,68 @@ class _Channel:
             chunks.append(chunk)
         return b"".join(chunks)
 
-    async def _read_sse(self, resp: httpx2.Response) -> None:
+    async def _finish_stream(self, rid: object, end: _StreamEnd) -> None:
+        """An upstream stream ended. If it never answered the request, resume it the
+        2025-11-25 way (GET with Last-Event-ID on the upstream session) so the client gets
+        its answer on the stream it already has, inspected like the rest; otherwise fail
+        the request now rather than leave the client waiting for the request timeout."""
+        resumes = 0
+        while not end.answered:
+            if end.oversized:
+                await self._fail(rid, "upstream SSE event too large")
+                return
+            upstream_id = self.legacy.upstream_id if self.legacy is not None else None
+            if end.last_event_id is None or upstream_id is None or resumes >= MAX_RESUMES:
+                await self._fail(rid, "upstream closed the stream without answering")
+                return
+            resumes += 1
+            await anyio.sleep(min((end.retry_ms or 0) / 1000, MAX_RETRY_WAIT_S))
+            headers = {
+                **self.trace,
+                "Accept": "text/event-stream",
+                "Mcp-Session-Id": upstream_id,
+                "Last-Event-ID": end.last_event_id,
+                **self.proxy.cfg.upstream_headers,
+            }
+            version = self.router.session.negotiated_version
+            if version is not None:
+                headers[hh.PROTOCOL_VERSION] = version
+            async with self.proxy.client.stream(
+                "GET", self.proxy.cfg.upstream, headers=headers
+            ) as resp:
+                ctype = resp.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if resp.status_code != 200 or ctype != "text/event-stream":
+                    await self._fail(rid, f"upstream refused to resume ({resp.status_code})")
+                    return
+                last = end.last_event_id
+                end = await self._read_sse(resp, rid)
+                end.last_event_id = end.last_event_id or last
+
+    async def _read_sse(self, resp: httpx2.Response, rid: object) -> _StreamEnd:
+        end = _StreamEnd()
         limit = self.proxy.cfg.max_body_bytes
         lines: list[str] = []
         size = 0
+
+        async def deliver() -> None:
+            for line in lines:
+                field_name, _, value = line.partition(":")
+                value = value.removeprefix(" ")
+                if field_name == "id" and "\x00" not in value:  # per the SSE spec
+                    end.last_event_id = value[:256] or None  # empty id resets it
+                elif field_name == "retry" and value.isdigit():
+                    end.retry_ms = int(value[:9])
+            data = _sse_events(lines)
+            if data:
+                msg = _loads_obj(data)
+                if msg is not None and msg.get("id") == rid and ("result" in msg or "error" in msg):
+                    end.answered = True
+                await self.router.handle_server_line(data.encode("utf-8"))
+
         async for line in resp.aiter_lines():
             if line == "":
-                data = _sse_events(lines)
+                await deliver()
                 lines, size = [], 0
-                if data:
-                    await self.router.handle_server_line(data.encode("utf-8"))
                 continue
             size += len(line)
             if size > limit:
@@ -450,11 +535,11 @@ class _Channel:
                     direction=Direction.SERVER_TO_CLIENT,
                     reason="upstream SSE event too large; stream closed",
                 )
-                return
+                end.oversized = True
+                return end
             lines.append(line)
-        data = _sse_events(lines)
-        if data:
-            await self.router.handle_server_line(data.encode("utf-8"))
+        await deliver()
+        return end
 
     async def _fail(self, rid: object, why: str) -> None:
         """Answer a forwarded request the upstream didn't, through the router (which
@@ -526,6 +611,26 @@ async def _watch_disconnect(receive: Receive, tg: TaskGroup) -> None:
         if message["type"] == "http.disconnect":
             tg.cancel_scope.cancel()
             return
+
+
+def _loads_obj(text: str) -> dict[str, Any] | None:
+    try:
+        return as_obj(json.loads(text))
+    except (ValueError, RecursionError):
+        return None
+
+
+def _attribute(raw: bytes, rid: object) -> bytes:
+    """The JSON answer to a POST is the answer to that POST's request. An upstream that
+    could not read the request's id answers with ``"id": null``; give the error the
+    request's id so the client is answered instead of left waiting."""
+    try:
+        msg = as_obj(json.loads(raw))
+    except (ValueError, RecursionError):
+        return raw
+    if msg is not None and msg.get("id") is None and "error" in msg and "result" not in msg:
+        return json.dumps({**msg, "id": rid}).encode("utf-8")
+    return raw
 
 
 def _error(rid: object, code: int, message: str) -> dict[str, Any]:

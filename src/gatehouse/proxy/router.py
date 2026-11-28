@@ -355,6 +355,11 @@ class Router:
         await self._reply_error(frame.id, INVALID_REQUEST, f"gatehouse: {why}")
 
     async def _unsupported_version(self, frame: Frame, requested: str | None) -> None:
+        # An enveloped request is answered with the 2026-07-28 versions this connection
+        # can reach, which are what server/discover advertised through gatehouse.
+        # Listing handshake versions here would contradict that discover result.
+        offered = [v for v in self.session.offered_versions if v in MODERN_VERSIONS]
+        supported = offered or list(reversed(MODERN_VERSIONS))
         self.emit.emit(
             EventType.PROTOCOL_UNSUPPORTED_VERSION,
             severity=Severity.LOW,
@@ -363,13 +368,13 @@ class Router:
             method=frame.method,
             request_id=frame.id_key,
             reason=f"request protocol version {requested!r} is not inspected by gatehouse",
-            details={"Supported": list(ALL_VERSIONS)},
+            details={"Supported": supported},
         )
         await self._reply_error(
             frame.id,
             UNSUPPORTED_PROTOCOL_VERSION,
             "Unsupported protocol version",
-            {"supported": [*reversed(ALL_VERSIONS)], "requested": requested},
+            {"supported": supported, "requested": requested},
         )
 
     async def _client_request(self, frame: Frame) -> None:
@@ -1322,6 +1327,7 @@ class Router:
             new["supportedVersions"] = keep
             modified = True
         offered_modern = tuple(v for v in keep if v in MODERN_VERSIONS)
+        self.session.offered_versions = tuple(keep)
         finding = detect_downgrade(self._pinned_versions(), offered_versions=keep)
         if finding is not None:
             self._downgrade(finding)

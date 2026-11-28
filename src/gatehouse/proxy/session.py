@@ -79,8 +79,11 @@ class Session:
     negotiated_version: str | None = None
     version_rejected: bool = False
     initialized: bool = False
-    # era of this connection, latched by the first request other than server/discover
+    # era of this connection: legacy on a successful initialize, modern on a successful
+    # 2026-07-28 probe or the first enveloped request (ADR-0002)
     era: Era | None = None
+    # supportedVersions of the last server/discover result gatehouse delivered
+    offered_versions: tuple[str, ...] = ()
     # set when a downgrade was detected and the policy refuses it
     downgrade_blocked: bool = False
     # (tool, args fingerprint) -> grant; see router._grant_key

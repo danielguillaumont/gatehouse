@@ -11,10 +11,11 @@ import base64
 import json
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx2
 import pytest
 from helpers import ALLOW_ALL_TOFU, FINGERPRINT_KEY, MODERN
@@ -321,6 +322,61 @@ async def test_unreachable_upstream_fails_with_an_error_response(tmp_path: Path)
     assert resp.json()["error"]["code"] == -32000
 
 
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"_meta": {"io.modelcontextprotocol/clientCapabilities": {}}}],
+    ids=["no-meta", "meta-without-version"],
+)
+async def test_modern_header_without_envelope_is_invalid_params(
+    tmp_path: Path, params: dict[str, Any]
+) -> None:
+    # Conformance server-stateless (sep-2575-request-meta-invalid-*): a 2026-07-28 request
+    # whose envelope is missing gets 400 / -32602. It used to be re-labelled as a legacy
+    # probe and sent upstream without a session, and the upstream's answer was lost.
+    up = Recorder()
+    body = {"jsonrpc": "2.0", "id": 7, "method": "server/discover", "params": params}
+    async with rig(tmp_path, up) as r:
+        resp = await r.post(body, modern_headers(body))
+        assert r.events("protocol.invalid_meta")
+    assert resp.status_code == 400
+    assert resp.json()["id"] == 7 and resp.json()["error"]["code"] == -32602
+    assert not up.requests
+
+
+async def test_upstream_error_without_an_id_answers_the_request(tmp_path: Path) -> None:
+    async def no_id(scope: Any, receive: Any, send: Any) -> None:
+        while (await receive()).get("more_body"):
+            pass
+        reply = {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Bad"}}
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": json.dumps(reply).encode()})
+
+    async with rig(tmp_path, no_id) as r:
+        resp = await r.modern(5, "tools/list")
+    assert resp.json()["id"] == 5 and resp.json()["error"]["code"] == -32600
+
+
+async def test_unsupported_version_lists_what_discover_advertised(tmp_path: Path) -> None:
+    # Conformance sep-2575-server-unsupported-version-error: the -32022 supported list
+    # must be a subset of server/discover's supportedVersions, so no handshake versions.
+    async with rig(tmp_path, Recorder()) as r:
+        discovered = await r.modern(1, "server/discover")
+        advertised = discovered.json()["result"]["supportedVersions"]
+        body = modern_body(2, "server/discover")
+        body["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = "v999.0.0"
+        resp = await r.post(body, modern_headers(body, **{"MCP-Protocol-Version": "v999.0.0"}))
+    assert resp.status_code == 400
+    error = resp.json()["error"]
+    assert error["code"] == -32022 and error["data"]["requested"] == "v999.0.0"
+    assert error["data"]["supported"] and set(error["data"]["supported"]) <= set(advertised)
+
+
 # ---------------------------------------------------------------------- legacy sessions
 
 
@@ -353,6 +409,97 @@ async def test_legacy_session_ids_are_gatehouse_issued(tmp_path: Path) -> None:
         assert gone.status_code == 204
         after = await r.post(_legacy(5, "tools/list"), {"Mcp-Session-Id": sid})
         assert after.status_code == 404
+
+
+@dataclass
+class PollingUpstream:
+    """A 2025-11-25 server that closes a tools/call stream after a priming event and
+    delivers the result when the client resumes with GET + Last-Event-ID (SEP-1699)."""
+
+    close_without_answer: bool = True
+    gets: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            return
+        body = b""
+        while True:
+            message = await receive()
+            body += message.get("body", b"")
+            if not message.get("more_body"):
+                break
+        headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
+        sse = [(b"content-type", b"text/event-stream")]
+        if scope["method"] == "GET":
+            self.gets.append(headers)
+            result = {"content": [{"type": "text", "text": "resumed ok"}], "isError": False}
+            frame = {"jsonrpc": "2.0", "id": 2, "result": result}
+            await send({"type": "http.response.start", "status": 200, "headers": sse})
+            event = b"id: e2\ndata: " + json.dumps(frame).encode() + b"\n\n"
+            await send({"type": "http.response.body", "body": event})
+            return
+        msg = json.loads(body)
+        if msg.get("method") == "initialize":
+            result: dict[str, Any] = {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "polling", "version": "1"},
+            }
+            reply = json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}).encode()
+            json_hdr = [(b"content-type", b"application/json"), (b"mcp-session-id", b"up-1")]
+            await send({"type": "http.response.start", "status": 200, "headers": json_hdr})
+            await send({"type": "http.response.body", "body": reply})
+            return
+        if "id" not in msg:
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        if msg["method"] == "tools/list":
+            result = {"tools": [_tool("slow")]}
+            reply = json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": result}).encode()
+            await send({"type": "http.response.start", "status": 200, "headers": sse})
+            await send({"type": "http.response.body", "body": b"data: " + reply + b"\n\n"})
+            return
+        # tools/call: priming event with an id and a retry hint, then close.
+        await send({"type": "http.response.start", "status": 200, "headers": sse})
+        await send({"type": "http.response.body", "body": b"id: e1\nretry: 10\ndata: \n\n"})
+
+
+async def _legacy_session(r: Rig) -> dict[str, str]:
+    init = await r.post(
+        _legacy(1, "initialize", {"protocolVersion": "2025-11-25", "capabilities": {}})
+    )
+    hdr = {"Mcp-Session-Id": init.headers["mcp-session-id"], "MCP-Protocol-Version": "2025-11-25"}
+    await r.post({"jsonrpc": "2.0", "method": "notifications/initialized"}, hdr)
+    await r.post(_legacy(9, "tools/list"), hdr)
+    return hdr
+
+
+async def test_closed_upstream_stream_is_resumed_with_last_event_id(tmp_path: Path) -> None:
+    # Conformance server-sse-polling (2025-11-25): gatehouse resumes the upstream stream
+    # itself and delivers the inspected result on the client's original stream.
+    up = PollingUpstream()
+    async with rig(tmp_path, up) as r:
+        hdr = await _legacy_session(r)
+        resp = await r.post(_legacy(2, "tools/call", {"name": "slow", "arguments": {}}), hdr)
+    assert _payload(resp)["result"]["content"][0]["text"] == "resumed ok"
+    assert len(up.gets) == 1
+    assert up.gets[0]["last-event-id"] == "e1" and up.gets[0]["mcp-session-id"] == "up-1"
+
+
+async def test_stream_closed_without_answer_fails_fast(tmp_path: Path) -> None:
+    # No event id to resume from: the client gets an error now, not at the request timeout.
+    async def closes(scope: Any, receive: Any, send: Any) -> None:
+        while (await receive()).get("more_body"):
+            pass
+        sse = [(b"content-type", b"text/event-stream")]
+        await send({"type": "http.response.start", "status": 200, "headers": sse})
+        await send({"type": "http.response.body", "body": b": keep-alive\n\n"})
+
+    async with rig(tmp_path, closes, request_timeout=30) as r:
+        with anyio.fail_after(5):
+            resp = await r.modern(4, "tools/list")
+    assert _payload(resp)["error"]["code"] == -32000
 
 
 # ---------------------------------------------------------------------- the real SDK server

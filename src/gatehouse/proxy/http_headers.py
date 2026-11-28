@@ -38,25 +38,27 @@ ROUTING = frozenset({PROTOCOL_VERSION, METHOD, NAME})
 NAME_BEARING = {TOOLS_CALL: "name", PROMPTS_GET: "name", RESOURCES_READ: "uri"}
 
 _SAFE = re.compile(r"[\x20-\x7E]{0,8192}")
-_SENTINEL = re.compile(r"=\?base64\?(?P<payload>[A-Za-z0-9+/=]{0,65536})\?=")
+_SENTINEL = re.compile(r"=\?base64\?(?P<payload>.{0,65536})\?=")  # payload checked below
 _DECIMAL = re.compile(r"-?[0-9]{1,64}(?:\.[0-9]{1,64})?")
 
 
 def encode_value(value: str) -> str:
     """Header form of a value: verbatim if printable ASCII without edge whitespace,
     otherwise the ``=?base64?…?=`` sentinel."""
-    if _SAFE.fullmatch(value) and value == value.strip() and not value.startswith("=?base64?"):
+    if _SAFE.fullmatch(value) and value == value.strip() and not _SENTINEL.fullmatch(value):
         return value
     return f"=?base64?{base64.b64encode(value.encode('utf-8')).decode('ascii')}?="
 
 
 def decode_value(value: str | None) -> str | None:
-    """Inverse of ``encode_value``. A malformed sentinel decodes to None (never matches)."""
+    """Inverse of ``encode_value``. Only a complete ``=?base64?…?=`` is the sentinel
+    (a value like ``=?base64?abc`` is a literal); a sentinel whose payload is not
+    canonical base64 of UTF-8 decodes to None, which never matches."""
     if value is None:
         return None
     m = _SENTINEL.fullmatch(value)
     if m is None:
-        return None if value.startswith("=?base64?") else value
+        return value
     payload = m.group("payload")
     try:
         raw = base64.b64decode(payload, validate=True)

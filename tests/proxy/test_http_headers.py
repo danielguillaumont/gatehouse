@@ -53,7 +53,16 @@ def test_encoding_round_trip() -> None:
 def test_malformed_sentinel_never_matches() -> None:
     assert decode_value("=?base64?not base64?=") is None
     assert decode_value("=?base64?YQ?=") is None  # missing padding: not canonical
-    assert decode_value("=?base64?truncated") is None
+    assert decode_value("=?base64?!!?=") is None
+
+
+def test_incomplete_sentinel_is_a_literal() -> None:
+    # Spec "Value Encoding": only a value wrapped in =?base64? ... ?= is encoded.
+    # Conformance: sep-2243-server-validate-param-match (ServerLiteralMissingBase64Suffix).
+    assert decode_value("=?base64?SGVsbG8=") == "=?base64?SGVsbG8="
+    assert encode_value("=?base64?SGVsbG8=") == "=?base64?SGVsbG8="
+    # A literal that *is* a complete sentinel must be wrapped to survive the trip.
+    assert decode_value(encode_value("=?base64?SGVsbG8=?=")) == "=?base64?SGVsbG8=?="
 
 
 def test_consistent_request_passes() -> None:
