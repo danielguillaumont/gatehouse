@@ -67,6 +67,7 @@ disagree. `SchemaVersion` is 1.
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
 | `pin.store_error` | pin store unreadable or unwritable | |
 | `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients | Channel (`mrtr`) |
+| `flow.provenance_match` | an egress call's arguments copy text or a secret from a `private_data` result the session read (D-043); high severity if the session also holds `untrusted_input` | DetectorId `flow.provenance`; RuleId `private-data-copied`, `private-secret-copied` or `provenance-unavailable`; MatchSummary names the source tools; Details.FindingAction |
 | `flow.rule_of_two` | a call completes the Rule-of-Two trifecta (any `flow.mode` but `off`); Action says what happened | FlowMode, SessionLabels, ToolLabels |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
 | `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow store that can't be read or written (fails closed) | Component (`flow_store`) |

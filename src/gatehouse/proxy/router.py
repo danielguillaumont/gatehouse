@@ -46,6 +46,7 @@ from gatehouse.inspect.protocol import (
     detect_instruction_injection,
     x_mcp_headers,
 )
+from gatehouse.inspect.provenance import argument_fingerprints, is_copy, result_fingerprints
 from gatehouse.inspect.risk import classify
 from gatehouse.inspect.secrets import detect_secrets
 from gatehouse.inspect.server_requests import SHAPE_ID, inspect_server_request
@@ -210,6 +211,7 @@ class _Call:
     approval: bool | None = None  # decided by a gatehouse approval retry
     approval_note: str | None = None
     answer_findings: list[Finding] = field(default_factory=list[Finding])
+    flow_labels: frozenset[str] = frozenset()  # effective labels, when flow control is on
 
 
 class Router:
@@ -247,6 +249,10 @@ class Router:
         policy = self.cfg.policy.policy
         if policy is None:
             return FindingAction.BLOCK
+        if finding.detector_id == PROVENANCE_ID:
+            # Its own setting (D-043): a copy of private data after untrusted input.
+            tainted = finding.severity is Severity.HIGH
+            return policy.flow.provenance if tainted else FindingAction.LOG
         return policy.findings.for_severity(finding.severity.value)
 
     def _worst(self, findings: Iterable[Finding]) -> Action:
@@ -668,6 +674,8 @@ class Router:
             reasons.append(info.approval_reason or "tool definition flagged at listing time")
 
         findings = scan_arguments(server, tool, arguments, self.cfg.scan) + extra
+        if flow is not None:
+            findings += self._provenance(tool, arguments, flow)
         for f in findings:
             act = _FINDING_TO_ACTION[self._finding_action(f)]
             actions.append(act)
@@ -712,6 +720,89 @@ class Router:
                 details={"Component": "flow_store"},
             )
         return _FlowCheck(mode, labels, session, violation=False, store_error=error)
+
+    def _effective_labels(self, tool: str, flow: _FlowCheck) -> frozenset[Label]:
+        policy = self.cfg.policy.policy
+        assert policy is not None
+        return flow.tool_labels | policy.labels_for(self.cfg.server_name, tool)
+
+    def _provenance(self, tool: str, arguments: dict[str, Any], flow: _FlowCheck) -> list[Finding]:
+        """Does this egress call carry a copy of private data the session read? (D-043)"""
+        fp = self.cfg.fingerprinter
+        if fp is None or Label.EGRESS not in self._effective_labels(tool, flow):
+            return []
+        try:
+            found = self.cfg.flow.find(
+                self.cfg.agent_session_id, "fp", argument_fingerprints(arguments, fp)
+            )
+        except FlowStoreError as exc:
+            # Fail closed: treat the call as a copy made after untrusted input.
+            flow.store_error = str(exc)
+            self.emit.emit(
+                EventType.INTERNAL_ERROR,
+                severity=Severity.HIGH,
+                action=EventAction.FAIL_CLOSED,
+                tool_name=tool,
+                reason=f"flow store unreadable; provenance unknown: {exc}",
+                details={"Component": "flow_store"},
+            )
+            return [
+                Finding(
+                    detector_id=PROVENANCE_ID,
+                    rule_id="provenance-unavailable",
+                    severity=Severity.HIGH,
+                    summary="provenance of the arguments could not be checked (flow store)",
+                    location="arguments",
+                )
+            ]
+        if not is_copy(found):
+            return []
+        sources = sorted({f"{s}/{t}" for s, t in found.values()})
+        tainted = Label.UNTRUSTED_INPUT in flow.session_labels
+        secret = any(v.startswith("k:") for v in found)
+        return [
+            Finding(
+                detector_id=PROVENANCE_ID,
+                rule_id="private-data-copied" if not secret else "private-secret-copied",
+                severity=Severity.HIGH if tainted else Severity.MEDIUM,
+                summary=(
+                    f"arguments contain {'a secret' if secret else 'text'} copied from a "
+                    f"private_data result ({', '.join(sources[:3])}; {len(found)} "
+                    "fingerprints)" + ("; the session also read untrusted input" if tainted else "")
+                ),
+                location="arguments",
+                mitre=("AML.T0086",),
+                owasp=("LLM02",),
+            )
+        ]
+
+    async def _record_private_result(self, pending: Pending, result: dict[str, Any]) -> str | None:
+        """Fingerprint a private_data result before the agent sees it."""
+        fp = self.cfg.fingerprinter
+        if fp is None or Label.PRIVATE_DATA.value not in pending.flow_labels:
+            return None
+        fps = await anyio.to_thread.run_sync(result_fingerprints, result, fp)
+        if not fps:
+            return None
+        try:
+            self.cfg.flow.add(
+                self.cfg.agent_session_id,
+                "fp",
+                fps,
+                server=self.cfg.server_name,
+                tool=pending.tool_name or "",
+            )
+        except FlowStoreError as exc:
+            self.emit.emit(
+                EventType.INTERNAL_ERROR,
+                severity=Severity.HIGH,
+                action=EventAction.FAIL_CLOSED,
+                tool_name=pending.tool_name,
+                reason=f"flow store unwritable; withholding a private result: {exc}",
+                details={"Component": "flow_store"},
+            )
+            return "provenance of a private result could not be recorded (flow store unavailable)"
+        return None
 
     def _flow_record(self, tool: str, labels: Iterable[Label]) -> str | None:
         """Add labels to the session before the call or result reaches its destination.
@@ -946,6 +1037,7 @@ class Router:
             effective = verdict.flow.tool_labels | policy.labels_for(
                 self.cfg.server_name, call.name
             )
+            call.flow_labels = frozenset(label.value for label in effective)
             error = self._flow_record(call.name, effective)
             if error is not None:
                 action = Action.BLOCK
@@ -968,6 +1060,22 @@ class Router:
 
         for f in verdict.findings:
             fa = self._finding_action(f)
+            if f.detector_id == PROVENANCE_ID:
+                # Its own event type (one per match), with the detection columns.
+                self.emit.emit(
+                    EventType.FLOW_PROVENANCE_MATCH,
+                    severity=f.severity,
+                    action=outcome,
+                    detector_id=f.detector_id,
+                    rule_id=f.rule_id,
+                    match_summary=f.summary,
+                    location=f.location,
+                    mitre=list(f.mitre),
+                    owasp=list(f.owasp),
+                    details={"FindingAction": fa.value},
+                    **call.common,
+                )
+                continue
             self.emit.emit_finding(
                 f, action=outcome, details={"FindingAction": fa.value}, **call.common
             )
@@ -999,6 +1107,7 @@ class Router:
                 modern=call.meta.present,
                 version=call.meta.version,
                 client_caps=call.meta.capabilities,
+                flow_labels=call.flow_labels,
             )
             await self.to_server(call.raw)
         else:
@@ -1803,6 +1912,9 @@ class Router:
             # untrusted input once the agent reads it.
             flow_error = self._flow_record(pending.tool_name or "", [Label.UNTRUSTED_INPUT])
             blocked = flow_error is not None
+        if not blocked and result is not None and pending.flow_labels:
+            flow_error = await self._record_private_result(pending, result)
+            blocked = flow_error is not None
         outcome = (
             EventAction.BLOCKED
             if blocked
@@ -1859,6 +1971,7 @@ class Router:
 
 
 _INJECTION_DETECTORS = frozenset({"response.injection", "text.invisible"})
+PROVENANCE_ID = "flow.provenance"
 
 
 def _shape(

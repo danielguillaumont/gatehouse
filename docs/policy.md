@@ -168,6 +168,30 @@ servers:
 - **Failures are closed.** An unreadable store counts as holding every label. A label
   that can't be recorded blocks its call.
 
+### Provenance: copies of private data
+
+With flow control on, gatehouse also fingerprints what `private_data` tools return. When
+an `egress` call's arguments contain a copy, it emits `flow.provenance_match` and names
+the tool the data came from (D-043).
+
+- **What counts as a copy:**
+  - a span of about 55 characters or more, after case and whitespace are normalized;
+  - the same text in base64, hex or percent encoding;
+  - any secret from a private result.
+- **What happens:**
+  - If the session also holds `untrusted_input`, the call gets `flow.provenance`
+    (default `require_approval`; `block` and `log` are the other choices).
+  - Otherwise the match is logged, because sending your own notes on is normal.
+- Fingerprints are keyed HMACs, so the store never holds the text.
+- **Limit:** a paraphrase or summary doesn't match. Treat a match as evidence; the
+  Rule of Two is the guarantee.
+
+```yaml
+flow:
+  mode: monitor
+  provenance: block     # a copy of private data after untrusted input is blocked
+```
+
 `gatehouse policy prove` can check flow invariants, for example "no `egress` tool is
 allowed in a session holding `untrusted_input` and `private_data`" (see
 [`examples/invariants.yaml`](../examples/invariants.yaml)).

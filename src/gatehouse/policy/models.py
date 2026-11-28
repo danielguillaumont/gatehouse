@@ -161,6 +161,10 @@ class FlowSettings(_Strict):
     # remove them): a server choosing its own labels could otherwise hide an egress tool.
     annotation_hints: bool = True
     name_hints: bool = True
+    # An egress call whose arguments copy private data the session read (D-043): what to
+    # do when the session also holds untrusted input. Without untrusted input it is
+    # logged (sending your own notes to a colleague is a normal task).
+    provenance: FindingAction = FindingAction.REQUIRE_APPROVAL
 
 
 class ServerBlock(_Strict):

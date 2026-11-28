@@ -56,6 +56,11 @@ class Fingerprinter:
     def text(self, value: str) -> str:
         return hmac.new(self._key, value.encode("utf-8"), hashlib.sha256).hexdigest()
 
+    def short(self, value: str, nbytes: int = 8) -> str:
+        """HMAC-SHA256 truncated to ``nbytes`` (hex), via the C fast path. For bulk
+        fingerprints such as provenance spans, where thousands are computed per result."""
+        return hmac.digest(self._key, value.encode("utf-8"), "sha256")[:nbytes].hex()
+
     def json(self, value: object) -> str:
         return self.text(canonical_json(value))
 
