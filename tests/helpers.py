@@ -14,6 +14,7 @@ from gatehouse.events.sinks import MemorySink
 from gatehouse.inspect.pipeline import ScanConfig
 from gatehouse.inspect.self_protect import protected_variants
 from gatehouse.policy.loader import load_policy
+from gatehouse.proxy.app import severity_overrides
 from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Approver, Router, RouterConfig
@@ -204,7 +205,9 @@ def make_harness(
         policy=load,
         pins_path=pins_path,
         scan=ScanConfig(
-            protected_paths=protected_variants([policy_path, pins_path]), fingerprint=fp
+            protected_paths=protected_variants([policy_path, pins_path]),
+            fingerprint=fp,
+            severity_overrides=severity_overrides(load.policy),
         ),
         fingerprinter=fp,
         policy_watcher=PolicyWatcher(policy_path, load.sha256),

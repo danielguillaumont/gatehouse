@@ -113,20 +113,45 @@ class PinningMode(StrEnum):
         return {"off": 0, "tofu": 1, "strict": 2}[self.value]
 
 
+class RuleSeverity(StrEnum):
+    """A severity a policy can give one rule (same values as events.schema.Severity)."""
+
+    INFORMATIONAL = "informational"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
 class FindingAction(StrEnum):
     BLOCK = "block"
     REQUIRE_APPROVAL = "require_approval"
     LOG = "log"  # allow, but record the detection
 
 
+# "detector_id/rule_id", either part may use * globs: "response.injection/xml-*".
+RuleRef = Annotated[
+    StrictStr,
+    Field(min_length=3, max_length=MAX_PATTERN_LEN, pattern=r"^[a-z0-9_.*]+/[a-z0-9_.*-]+$"),
+]
+
+
 class FindingActions(_Strict):
-    """What to do when a detector reports a finding of a given severity."""
+    """What to do when a detector reports a finding of a given severity.
+
+    ``rules`` re-rates individual rules (D-049): the finding's severity is replaced before
+    the table above applies, and the event carries the new severity, so a rule that is
+    noisy in one deployment can drop to ``medium`` without ``high: log`` everywhere.
+    """
 
     critical: FindingAction = FindingAction.BLOCK
     high: FindingAction = FindingAction.BLOCK
     medium: FindingAction = FindingAction.LOG
     low: FindingAction = FindingAction.LOG
     informational: FindingAction = FindingAction.LOG
+    rules: Annotated[dict[RuleRef, RuleSeverity], Field(max_length=256)] = Field(
+        default_factory=dict[str, "RuleSeverity"]
+    )
 
     def for_severity(self, severity: str) -> FindingAction:
         return FindingAction(getattr(self, severity))

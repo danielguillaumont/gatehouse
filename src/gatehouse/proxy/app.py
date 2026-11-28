@@ -23,7 +23,7 @@ from gatehouse.inspect.pipeline import ScanConfig
 from gatehouse.inspect.self_protect import protected_variants
 from gatehouse.policy.errors import PolicyErrorKind, PolicyLoadFailed
 from gatehouse.policy.loader import PolicyLoad, load_policy
-from gatehouse.policy.models import FlowMode
+from gatehouse.policy.models import FlowMode, Policy
 from gatehouse.protocol import PINNED_SPEC_VERSION
 from gatehouse.proxy.agent import agent_session_id
 from gatehouse.proxy.framing import DEFAULT_MAX_FRAME_BYTES
@@ -70,6 +70,13 @@ def _check_expected_hash(load: PolicyLoad, expected: str | None) -> PolicyLoad:
         message=f"policy sha256 {load.sha256} does not match --expect-policy-sha256",
     )
     return PolicyLoad(path=load.path, sha256=load.sha256, policy=None, error=event)
+
+
+def severity_overrides(policy: Policy | None) -> tuple[tuple[str, Severity], ...]:
+    """The policy's per-rule severity overrides, for the detector pipeline (D-049)."""
+    if policy is None:
+        return ()
+    return tuple((ref, Severity(sev.value)) for ref, sev in policy.findings.rules.items())
 
 
 def build_emitter(opts: RunOptions, context: EventContext) -> Emitter:
@@ -152,7 +159,11 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         server_name=opts.server_name,
         policy=load,
         pins_path=opts.pins_path,
-        scan=ScanConfig(protected_paths=protected_variants(protected), fingerprint=fingerprinter),
+        scan=ScanConfig(
+            protected_paths=protected_variants(protected),
+            fingerprint=fingerprinter,
+            severity_overrides=severity_overrides(load.policy),
+        ),
         fingerprinter=fingerprinter,
         policy_watcher=PolicyWatcher(opts.policy_path, load.sha256),
         approval_timeout=opts.approval_timeout if opts.approval_timeout > 0 else None,

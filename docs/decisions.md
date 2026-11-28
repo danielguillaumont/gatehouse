@@ -877,3 +877,20 @@ number links to a workflow run".
 - **Alternatives:** a policy file per row was rejected, because the files drift. A
   local run was rejected because of the user's constraint and runner-to-runner noise:
   every row should come from the same run.
+
+**D-049 (2026-11-28) Per-rule severity overrides re-rate the finding, not just the
+action.** `findings.rules` maps `detector_id/rule_id` globs to a severity.
+- **It's applied inside the pure detector pipeline** (`apply_overrides` in
+  `inspect/pipeline.py`, configured once from the policy because policies don't hot
+  reload). So the event, the circuit breaker, quarantine and the severity-to-action
+  table all see the same severity.
+- **Why a severity, not an action.** An action override would leave the event saying
+  `high` while gatehouse only logged it, and the SOC would see "high, allowed" and
+  wonder why. A re-rated severity keeps the event and the decision consistent.
+- **Precedence:** an exact key, then the longest glob. This is simple and
+  order-independent. A key that matches nothing is accepted rather than rejected,
+  because rule ids are an open set as detectors are added. `docs/policy.md` says to
+  check event names.
+- **This fixes the two held-out v1 false positives without `high: log` everywhere**
+  (NEXT.md). That fix is policy configuration, so it isn't evidence of better
+  detection, and the evaluation policies don't use it.

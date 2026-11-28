@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from typing import Any
 
+from gatehouse.events.schema import Severity
 from gatehouse.inspect.base import Finding
 from gatehouse.inspect.commands import detect_commands
 from gatehouse.inspect.injection import detect_injection
@@ -26,6 +28,30 @@ from gatehouse.jsonutil import as_str
 class ScanConfig:
     protected_paths: tuple[str, ...] = ()
     fingerprint: Fingerprinter | None = None
+    # "detector_id/rule_id" glob -> severity (policy findings.rules, D-049)
+    severity_overrides: tuple[tuple[str, Severity], ...] = ()
+
+
+def _override(ref: str, overrides: Sequence[tuple[str, Severity]]) -> Severity | None:
+    """The most specific matching override: an exact ref, else the longest glob."""
+    best: tuple[int, Severity] | None = None
+    for pattern, severity in overrides:
+        if pattern == ref:
+            return severity
+        if fnmatchcase(ref, pattern) and (best is None or len(pattern) > best[0]):
+            best = (len(pattern), severity)
+    return best[1] if best else None
+
+
+def apply_overrides(findings: list[Finding], cfg: ScanConfig) -> list[Finding]:
+    """Re-rate findings whose rule the policy overrides (pure; no-op without overrides)."""
+    if not cfg.severity_overrides:
+        return findings
+    out: list[Finding] = []
+    for f in findings:
+        severity = _override(f"{f.detector_id}/{f.rule_id}", cfg.severity_overrides)
+        out.append(f if severity is None else f.model_copy(update={"severity": severity}))
+    return out
 
 
 def scan_arguments(
@@ -40,7 +66,7 @@ def scan_arguments(
     findings += detect_paths(values)
     findings += detect_pii(values)
     findings += [f for f in detect_invisible(values) if f.rule_id == "unicode-tag-characters"]
-    return findings
+    return apply_overrides(findings, cfg)
 
 
 def scan_tool_definition(
@@ -48,11 +74,11 @@ def scan_tool_definition(
 ) -> list[Finding]:
     """Server -> client: one tool definition from a tools/list result."""
     names = [n for n in (as_str(t.get("name")) for t in all_tools) if n is not None]
-    return detect_poisoning(tool, names)
+    return apply_overrides(detect_poisoning(tool, names), cfg)
 
 
 def scan_tool_result(
     server: str, tool: str, result: Mapping[str, Any], cfg: ScanConfig
 ) -> list[Finding]:
     """Server -> client: the result of a tools/call."""
-    return detect_injection(result)
+    return apply_overrides(detect_injection(result), cfg)

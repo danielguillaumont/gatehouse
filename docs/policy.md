@@ -340,6 +340,26 @@ asks the user through MCP elicitation when the client supports it, and blocks ot
 the strictest action wins. A finding can only make the policy decision stricter: a
 `log` finding never turns a policy `block` into an allow.
 
+### Per-rule severity
+
+`findings.rules` changes the severity of individual rules, before the table above
+applies. The event records the new severity, so Sentinel sees it too.
+
+```yaml
+findings:
+  rules:
+    "response.injection/xml-tag-instruction": medium   # noisy here: log, don't block
+    "args.pii/*": high                                 # every PII rule blocks
+```
+
+- **Keys** are `detector_id/rule_id`, as they appear in events (`DetectorId`,
+  `RuleId`). Either part may use `*` globs.
+- **Precedence:** an exact key wins, then the longest matching glob.
+- **Limits:** up to 256 entries. Keys must be lowercase. A key that doesn't match any
+  rule is accepted and does nothing, so check event names before relying on one.
+- **Scope:** the content detectors, meaning arguments, tool definitions and tool
+  results. Pinning, policy decisions and flow control don't have severities to change.
+
 ## Approval through elicitation
 
 When a call resolves to `require_approval` (a policy rule, an incomparable tie, or a
