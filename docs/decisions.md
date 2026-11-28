@@ -1117,3 +1117,24 @@ only tighten controls.**
 - *Alternative.* Tag HEAD and rerun the evaluation. Rejected: that costs about an hour
   of CI and would measure code that the release notes don't describe.
 
+**D-057 (2026-11-28) Egress calls log the registrable domains they send to.**
+- *Decision.* A `tool.call` event for an egress tool (ToolRisk `egress`, or the
+  `egress` flow label) carries `Details.EgressDomains`, at most 8 of them. These are
+  the registrable domains of URL hosts and email addresses in the arguments
+  (`inspect/egress.py`, pure and bounded).
+- *Why.* The roadmap's hunting pack asks for rare egress domains. Without a
+  destination, a SOC can't tell "sent mail to a colleague" from "sent mail to a domain
+  nobody here has ever written to".
+- *What is not logged.* The subdomain, path, query, port and email local part are all
+  dropped. Those are where an exfiltrated secret travels (`<secret>.evil.example`,
+  `?d=<secret>`). The redaction invariant still holds: no argument value reaches an
+  event, only a derived destination.
+- *Accuracy.* The heuristic keeps the last two labels, or three for `xx.co.uk`-style
+  names. It is not the Public Suffix List, so a few multi-level suffixes come out one
+  label short. That is acceptable for "rare destination" hunting and avoids shipping
+  the list.
+- *Alternatives.*
+  - Full hosts: rejected, since a subdomain can carry a secret.
+  - HMAC of the domain: rejected, because analysts need to read the domain to triage.
+  - A policy switch to turn it off: deferred until someone needs it.
+

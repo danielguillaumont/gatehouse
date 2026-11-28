@@ -43,6 +43,7 @@ from gatehouse.events.emitter import Emitter
 from gatehouse.events.fingerprint import Fingerprinter
 from gatehouse.events.schema import Direction, EventAction, EventType, Severity
 from gatehouse.inspect.base import Finding
+from gatehouse.inspect.egress import egress_domains
 from gatehouse.inspect.pinning import PinStatus, check_pin, tool_digest
 from gatehouse.inspect.pipeline import (
     ScanConfig,
@@ -1468,6 +1469,10 @@ class Router:
         self._maybe_strike(verdict.findings, call.name)
 
         reason = "; ".join(r for r in verdict.reasons if r) or None
+        egress = call.risk == "egress" or (
+            verdict.flow is not None and Label.EGRESS in verdict.flow.tool_labels
+        )
+        domains = egress_domains(call.args) if egress else ()
         self.emit.emit(
             EventType.TOOL_CALL,
             severity=Severity.MEDIUM if action is Action.BLOCK else Severity.INFORMATIONAL,
@@ -1481,6 +1486,7 @@ class Router:
             details={
                 "FindingCount": len(verdict.findings),
                 **({"Principal": self.principal} if self.principal != "local" else {}),
+                **({"EgressDomains": list(domains)} if domains else {}),
             },
             **call.common,
         )

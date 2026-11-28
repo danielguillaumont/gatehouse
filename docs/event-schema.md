@@ -61,7 +61,7 @@ disagree. `SchemaVersion` is 1.
 | `protocol.invalid_frame` / `batch_rejected` / `oversized_frame` / `unsolicited_response` | framing violations | |
 | `tools.listed` | a `tools/list` result was inspected | Offered, Visible, Filtered, PinningMode, ListedBy (`client`, or `gatehouse` for its own listing before a stateless call) |
 | `tools.list_changed` | server sent `notifications/tools/list_changed` | |
-| `tool.call` | every `tools/call` request | FindingCount; Principal (HTTP mode with OIDC only, ADR-0008) |
+| `tool.call` | every `tools/call` request | FindingCount; Principal (HTTP mode with OIDC only, ADR-0008); EgressDomains (egress tools only: registrable domains of URL hosts and email addresses in the arguments, at most 8, D-057) |
 | `tool.result` | every `tools/call` response | IsError, HasError, FindingCount |
 | `server.request` | server-initiated request (sampling, elicitation, roots); 2026-07-28 servers must not send any | FindingCount |
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
