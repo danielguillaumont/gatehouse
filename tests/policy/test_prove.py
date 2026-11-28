@@ -47,7 +47,8 @@ def test_broken_policy_fails_prove(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert rc == 1, out
     assert "FAILED  deletes always need a human" in out
-    assert "server='notes' tool='delete_note'" in out or "tool='delete" in out
+    line = out.splitlines()[out.splitlines().index("FAILED  deletes always need a human") + 1]
+    assert "delete" in line.split("tool=")[1]
     assert "FAILED  nothing leaves a session" in out
 
 
@@ -92,6 +93,22 @@ def test_bounded_check_finds_a_concrete_counterexample() -> None:
     assert rm.counterexample is not None
     assert rm.counterexample.tool.startswith("rm_")
     assert len(rm.counterexample.tool) != 4
+
+
+def test_bounded_check_combines_patterns() -> None:
+    # SymCC found this one first (D-041): a server-specific `read_*: allow` beats a global
+    # `*delete*: require_approval`, so `read_delete` is allowed.
+    engine = _engine(
+        "version: 1\ndefault_action: block\nservers:\n"
+        "  '*': {tools: {'*delete*': require_approval}}\n"
+        "  mail: {tools: {'read_*': allow}}\n"
+    )
+    invs = _invariants("version: 1\ninvariants:\n  - {name: d, tools: '*delete*', never: allow}\n")
+    (result,) = bounded_check(engine, invs)
+    assert result.holds is False
+    assert result.counterexample is not None
+    assert result.counterexample.server == "mail"
+    assert result.counterexample.tool.startswith("read_")
 
 
 def test_policy_labels_are_part_of_the_scope() -> None:

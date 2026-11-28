@@ -61,7 +61,7 @@ from gatehouse.policy.loader import strict_yaml
 from gatehouse.policy.models import Action, Label
 from gatehouse.policy.names import matches, normalize_name
 
-MAX_PAIRS = 4000  # (server, tool) name pairs in a bounded check
+MAX_PAIRS = 100_000  # (server, tool) name pairs in a bounded check; more is reported
 MAX_CONDITIONAL = 6  # conditional rules per name pair whose outcomes are enumerated
 SYMCC_TIMEOUT_S = 300.0
 
@@ -212,23 +212,40 @@ def _witnesses(pattern: str) -> set[str]:
     return out or {"q"}
 
 
+def _names(policy_patterns: set[str], scope_patterns: set[str]) -> set[str]:
+    """Candidate names: witnesses of every pattern, plus names that match a policy pattern
+    and a scope pattern at once. ``read_*`` and ``*delete*`` give ``read_delete``, the kind
+    of name where a broad server-specific allow beats a narrower global rule. (The first
+    version lacked these, and SymCC found what it missed: D-041.)"""
+    out: set[str] = {"q"}
+    witnesses = {p: _witnesses(p) for p in policy_patterns | scope_patterns}
+    for ws in witnesses.values():
+        out |= ws
+    for a, b in itertools.chain(
+        itertools.product(policy_patterns, scope_patterns),
+        itertools.product(scope_patterns, policy_patterns),
+    ):
+        if "*" not in a:
+            continue
+        for w in sorted(witnesses[b])[:8]:
+            out.add(a.replace("*", w, 1).replace("*", ""))
+            out.add(a.replace("*", "") + w)
+    return out
+
+
 def bounded_check(
     engine: CedarEngine,
     invariants: Sequence[Invariant],
     extra_names: Iterable[tuple[str, str]] = (),
 ) -> list[Result]:
     policy = engine.policy
-    servers: set[str] = {"q"}
-    tools: set[str] = {"q"}
-    for r in policy.rules:
-        servers |= _witnesses(r.server_norm)
-        tools |= _witnesses(r.tool_norm)
-    for s, t, _ in policy.label_rules:
-        servers |= _witnesses(s)
-        tools |= _witnesses(t)
-    for inv in invariants:
-        servers |= _witnesses(normalize_name(inv.servers))
-        tools |= _witnesses(normalize_name(inv.tools))
+    server_pats = {r.server_norm for r in policy.rules} | {s for s, _, _ in policy.label_rules}
+    tool_pats = {r.tool_norm for r in policy.rules} | {t for _, t, _ in policy.label_rules}
+    inv_servers = {normalize_name(inv.servers) for inv in invariants}
+    inv_tools = {normalize_name(inv.tools) for inv in invariants}
+    servers = _names(server_pats, inv_servers)
+    tools = _names(tool_pats, inv_tools)
+    total = len(servers) * len(tools)
     pairs = set(itertools.islice(itertools.product(sorted(servers), sorted(tools)), MAX_PAIRS))
     pairs |= {(normalize_name(s), normalize_name(t)) for s, t in extra_names}
 
@@ -290,7 +307,9 @@ def bounded_check(
                     True,
                     "bounded",
                     f"no counterexample in {checked} enumerated requests "
-                    f"({len(pairs)} name pairs); not a proof",
+                    f"({len(pairs)} name pairs"
+                    + (f", truncated from {total}" if total > MAX_PAIRS else "")
+                    + "); not a proof",
                 )
             )
     return results

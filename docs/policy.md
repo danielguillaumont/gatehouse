@@ -164,8 +164,11 @@ condition. "`send_email` is allowed only to example.com" is the condition's own 
 test, not an invariant.
 
 [`examples/invariants.yaml`](../examples/invariants.yaml) goes with
-[`examples/policy-flow.yaml`](../examples/policy-flow.yaml). Its first draft used
-`delete_*`, and `prove` found that a tool named `delete` was still allowed.
+[`examples/policy-flow.yaml`](../examples/policy-flow.yaml). `prove` found two holes in its
+first drafts:
+- `delete_*` let a tool named `delete` through (the bounded check found this one);
+- on `mail`, `read_*: allow` also allowed `read_delete`, because a server-specific glob
+  beats a global `*delete*` rule (SymCC found this; the bounded check had missed it).
 
 ## Name normalization
 

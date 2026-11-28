@@ -32,6 +32,9 @@ servers:
     tools:
       "list_*": allow
       "read_*": allow
+      # A server-specific allow beats a global rule, so `read_*` alone would also allow a
+      # tool named `read_delete`. `policy prove` (SymCC) found that in the first draft.
+      "*delete*": require_approval
       send_email:
         action: allow
         when:

@@ -49,7 +49,7 @@ jobs:
 
       - name: Cache the Cedar CLI
         id: cedar-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/cedar-cli
           key: cedar-cli-${{ env.CEDAR_CLI_VERSION }}-analyze-${{ runner.os }}

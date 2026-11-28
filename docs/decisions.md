@@ -582,9 +582,16 @@ proved by SymCC in Linux CI and checked by a bounded enumerator everywhere.**
   become `entities.json` from `policy compile --pins` (labels included) and the
   bounded check's universe. The symbolic proof covers every name, which is stronger
   than covering the pinned ones.
-- The check found a real bug in the first draft of `examples/policy-flow.yaml`:
-  `delete_*: require_approval` left a tool named `delete` (or `bulk_delete`) allowed by
-  `"*": allow`.
+- Two real bugs in the first drafts of `examples/policy-flow.yaml`:
+  - **The bounded check found the first.** `delete_*: require_approval` left a tool named
+    `delete` (or `bulk_delete`) allowed by `"*": allow`.
+  - **SymCC found the second; the bounded check had missed it.** On `mail`,
+    `read_*: allow` also allowed a tool named `read_delete`. A server-specific glob
+    beats a global rule, so the global `*delete*` didn't apply (CI run 46093960682,
+    counterexample `mail/read_delete`). The bounded check now also builds names that
+    match a policy pattern and an invariant pattern at once, and says when it hits its
+    pair cap.
+  - The symbolic proof is the guarantee; the bounded check is a fast local screen.
 Alternatives considered:
 - Invariants inside the policy file: whoever edits the policy would also edit what it
   is checked against.
