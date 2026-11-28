@@ -114,6 +114,23 @@ def _latency(root: Path, layers: str) -> tuple[str, str]:
     return f"+{g['p50'] - d['p50']:.2f}", f"+{g['p95'] - d['p95']:.2f}"
 
 
+def _latency_rows(root: Path, layers: str) -> list[dict[str, Any]]:
+    """Added round trip per payload size: overhead at p50, p95 and p99 (ms)."""
+    report = _load(root / f"bench-{layers}" / "latency.json")
+    if report is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for row in cast(list[dict[str, Any]], report["results"]):
+        d, g = row["direct"], row["gatehouse"]
+        out.append(
+            {
+                "size": row["size"],
+                **{q: round(g[q] - d[q], 2) for q in ("p50", "p95", "p99")},
+            }
+        )
+    return out
+
+
 def collate(root: Path) -> dict[str, Any]:
     reports = load_reports(root)
     summary: dict[str, dict[str, dict[str, Any]]] = {}
@@ -141,6 +158,8 @@ def collate(root: Path) -> dict[str, Any]:
         },
         "summary": summary,
         "latency": {k: {"p50": v[0], "p95": v[1]} for k, v in latency.items()},
+        "latency_sizes": {k: _latency_rows(root, k) for k in LAYERS},
+        "verdict_latency": verdict_latency(root),
     }
 
 
@@ -206,7 +225,52 @@ def render(data: dict[str, Any]) -> str:
         fp = sum(v["false_positives"] for v in row.values())
         benign = sum(v["benign"] for v in row.values())
         lines.append(f"| {target} | {' | '.join(cells)} | {_pct(fp, benign)} ({fp}/{benign}) |")
+    sizes = cast(dict[str, list[dict[str, Any]]], data.get("latency_sizes") or {})
+    measured = sorted({r["size"] for rows in sizes.values() for r in rows})
+    if measured:
+        lines += [
+            "",
+            "## Latency per layer combination",
+            "",
+            "Added round trip of one `tools/call` (argument and result of the given size), "
+            "gatehouse minus direct, in ms: p50 / p95 / p99. `python -m bench.latency "
+            "--layers <row>`.",
+            "",
+            "| Layers | " + " | ".join(_size(n) for n in measured) + " |",
+            "|---|" + "---|" * len(measured),
+        ]
+        for layers, rows in sizes.items():
+            if not rows:
+                continue
+            by = {r["size"]: r for r in rows}
+            cells = [
+                f"+{by[n]['p50']:.2f} / +{by[n]['p95']:.2f} / +{by[n]['p99']:.2f}"
+                if n in by
+                else "n/a"
+                for n in measured
+            ]
+            lines.append(f"| `{layers}` | {' | '.join(cells)} |")
+    verdicts = cast(dict[str, dict[str, Any]], data.get("verdict_latency") or {})
+    if verdicts:
+        lines += [
+            "",
+            "## Classifier verdict latency",
+            "",
+            "From the `classifier.verdict` events of the scenario runs (LatencyMs), ms.",
+            "",
+            "| Layers | Verdicts | p50 | p95 | max | No answer |",
+            "|---|---|---|---|---|---|",
+        ]
+        for layers, v in verdicts.items():
+            lines.append(
+                f"| `{layers}` | {v['verdicts']} | {v['p50']} | {v['p95']} | {v['max']} | "
+                f"{v['errors']} |"
+            )
     return "\n".join(lines) + "\n"
+
+
+def _size(n: int) -> str:
+    return f"{n // (1 << 20)} MiB" if n >= 1 << 20 else f"{n // 1024} KiB"
 
 
 def verdict_latency(root: Path) -> dict[str, Any]:

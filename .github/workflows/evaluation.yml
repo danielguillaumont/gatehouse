@@ -245,7 +245,7 @@ jobs:
       - name: Benchmark each layer combination (one runner, one after the other)
         run: |
           for l in observe pinning detectors v0.1 structural full; do
-            uv run python -m bench.latency --iterations 100 --sizes 1024 102400 --layers "$l" --out "reports/bench-$l"
+            uv run python -m bench.latency --iterations 100 --sizes 1024 65536 1048576 --layers "$l" --out "reports/bench-$l"
           done
       - uses: actions/upload-artifact@v5
         with:
