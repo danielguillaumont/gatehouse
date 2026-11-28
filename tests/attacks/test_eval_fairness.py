@@ -91,3 +91,18 @@ def test_verdict_latency_reads_classifier_events(tmp_path: Path) -> None:
     out = verdict_latency(tmp_path)["judge"]
     assert out["verdicts"] == 3 and out["p50"] == 300.0 and out["max"] == 900.0
     assert out["errors"] == 1
+
+
+def test_a_fully_blocked_bench_is_not_reported_as_latency(tmp_path: Path) -> None:
+    from attacks.evaluate import _latency, _latency_rows  # pyright: ignore[reportPrivateUsage]
+
+    bench = tmp_path / "bench-judge"
+    bench.mkdir()
+    row = {
+        "size": 1024,
+        "direct": {"p50": 0.04, "p95": 0.05, "p99": 0.05, "n": 30, "blocked": 0},
+        "gatehouse": {"p50": 0.7, "p95": 1.0, "p99": 1.3, "n": 30, "blocked": 30},
+    }
+    (bench / "latency.json").write_text(json.dumps({"results": [row]}), encoding="utf-8")
+    assert _latency(tmp_path, "judge") == ("n/a", "n/a")
+    assert _latency_rows(tmp_path, "judge") == []

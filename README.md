@@ -38,6 +38,8 @@ agent, blocks the call and logs the detection. Source: [`demo/`](demo/README.md)
 - **Inspects** tool listings, arguments and results for tool poisoning, prompt injection,
   secrets, credential paths, dangerous commands and personal data, using bounded,
   ReDoS-safe rules.
+  Optional model-based classifiers (Prompt Guard 2, Azure Prompt Shields, a local
+  Ollama judge) run in shadow, alert or enforce mode, behind a latency budget.
 - **Reports** every decision as a redacted event in a published schema
   (`GatehouseEvents_CL`): no argument values, no secrets, only HMAC fingerprints. Six
   Sentinel analytics rules, including cross-server injection-then-exfiltration, are tested
@@ -45,61 +47,71 @@ agent, blocks the call and logs the detection. Source: [`demo/`](demo/README.md)
 
 ## How it's measured
 
-A target-agnostic attack suite: 95 attacks and 29 benign scenarios, each a YAML file
-with a success condition checked at the mock server. A false positive is any change to
-benign traffic: a hidden tool, a blocked call or an edited result.
+Every number below comes from one GitHub Actions run:
+[46112090830](https://github.com/danielguillaumont/gatehouse/actions/runs/46112090830)
+(`evaluation.yml`, commit `37da760`, gatehouse 0.3.0, 2026-11-28). The sets:
+- the attack suite (102 attacks);
+- held-out v2: 330 attacks, mutated from 54 seeds and frozen before the v0.3.0
+  detectors were written;
+- MCPTox (485 poisoned tool definitions);
+- agent-egress-bench (32);
+- 531 benign scenarios across them.
 
-**Cross-server exfiltration chains (v0.2.0).** These come from GitHub Actions run
-[46101039038](https://github.com/danielguillaumont/gatehouse/actions/runs/46101039038)
-at commit `e5d7b7c` (`python -m attacks flow`).
-- There are eight chains across notes, web, mail, issue and file servers, each server
-  behind its own gatehouse. The injections are polite requests that no content rule
-  flags.
-- The scripted agent always follows the injection.
-- The simulated user declines gatehouse's prompts during attacks and accepts them
-  during benign tasks.
+A false positive is any change to benign traffic: a hidden tool, a blocked call or an
+edited result. [Method, all tables and the fairness notes](docs/evaluation.md#evaluation-v2-m6-v030).
 
-| flow.mode | Chains completed | Benign tasks passed | Approvals per benign task |
-|---|---|---|---|
-| monitor | 6 / 8 | 6 / 6 | 0.00 |
-| **approve** | **0 / 8** | **6 / 6** | **0.50** (3 tasks need 1 prompt, 3 need none) |
-| enforce | 0 / 8 | 3 / 6 | 0.00 |
+**Structural result: flow control prevents exfiltration it can't detect.**
+- There are eight cross-server chains across notes, web, mail, issue and file servers,
+  each server behind its own gatehouse.
+- The injections are polite requests that no content rule flags, and the scripted agent
+  always follows them.
+- With flow control (the Rule of Two across servers, `flow.mode: approve`), **0 of 8
+  chains complete**, against 8 of 8 with every other layer.
+- The cost is 3 approval prompts over 6 benign multi-server tasks, or 0.006 prompts per
+  benign scenario overall.
 
-Every chain was stopped by flow control itself (the Rule of Two), not by spotting the
-injection; one of them sends a paraphrase that no copy detector could match.
-[Details and limits](docs/evaluation.md#session-flow-control-m5).
+**Ablation: what each layer adds** (attacks stopped; FP over 531 benign; added p50 at
+1 KiB):
 
-**Against other gateways (v0.1.0).** The same suite ran through gatehouse and the two
-other stdio MCP gateways, on the same CI runner, from the same commit. It had 75 attacks
-and 16 benign scenarios then:
+| Layers | Chains completed | Held-out v2 | MCPTox | egress-bench | FP | p50 |
+|---|---|---|---|---|---|---|
+| observe only | 8 / 8 | 0 / 330 | 0 / 485 | 0 / 32 | 0.0% | +0.74 ms |
+| content detectors | 8 / 8 | 123 / 330 | 62 / 485 | 17 / 32 | 0.9% | +0.74 ms |
+| pinning + flow control | **0 / 8** | 0 / 330 | 0 / 485 | 0 / 32 | 0.0% | +1.27 ms |
+| **all (default)** | **0 / 8** | **123 / 330** | **62 / 485** | **17 / 32** | **0.9%** | **+1.27 ms** |
+| all + local LLM judge, enforce | 0 / 8 | 193 / 330 | n/a | n/a | 20.4%¹ | +714 ms² |
 
-| [Run 45507937200](docs/evaluation.md#competitor-comparison-m3), 2026-11-24 | gatehouse 0.1.0 | gateward 0.3.0 | mcp-watchdog 0.1.9 |
-|---|---|---|---|
-| **Benign false positives** (16 scenarios) | **2** | 6 | 0 |
-| Benign scenarios with an alert | 2 | not measured¹ | 8 |
-| Held-out attacks prevented (18, written after the detectors) | 6 | 7 | 1 (+9 alerted) |
-| Suite attacks prevented (MVP + M2 sets)² | 53 / 54 | 16 / 52 | 3 / 52 (+18 alerted) |
+¹ Over the 157 benign scenarios of the two sets the judge runs on.
+² Per tool result: the judge's median verdict time on a CPU runner.
 
-¹ gateward writes alerts to a SQLite audit log the harness doesn't read.
-² The MVP and M2 sets were written alongside gatehouse's detectors, so they mostly show
-that its controls do what they were designed to do. gateward and mcp-watchdog face 52, not
-54: two self-protection scenarios target gatehouse's own files.
+The content detectors *detect*. They catch 37% of the frozen held-out set, up from 34%
+before v0.3.0, with no new false positive. Rules that match *structure*, such as token
+formats, credential paths and reverse-shell shapes, generalize. Rules that match
+*wording* don't.
 
-On attacks it wasn't designed around, gatehouse prevents 6 of 18. Rules that match
-*structure*, such as token formats, credential paths and reverse-shell shapes, generalize.
-Rules that match *wording* don't. That's why the primary controls are pinning, policy and
-approval, with content detection as high-signal telemetry. Every miss is listed with a
-reproducing scenario in [`docs/known-bypasses.md`](docs/known-bypasses.md). Scoring
-details and caveats, including that I wrote the suite, are in
-[`docs/evaluation.md`](docs/evaluation.md).
+A model helps recall, but at a false-positive rate nobody should enforce. That's why
+classifiers default to `shadow`, and why the primary controls are pinning, policy and
+flow control. Every miss is listed with a reproducing scenario in
+[`docs/known-bypasses.md`](docs/known-bypasses.md).
 
-Added latency for a 1 KiB tool call, p95 (`uv run python -m bench.latency`, CI run
-46101039038, Ubuntu):
-- +1.98 ms with the Cedar engine (Cedar's share is about 0.2 ms);
-- +2.67 ms with flow control on.
+**Against other MCP gateways** (same runner, same commit, each in its default
+configuration; prevented, and false positives over 531 benign):
 
-The v0.1 figure was +4.35 ms on a Windows laptop. Details are in
-[`docs/evaluation.md`](docs/evaluation.md#latency).
+| | Held-out v2 | MCPTox | egress-bench | FP |
+|---|---|---|---|---|
+| **gatehouse 0.3.0** | **123** | **62** | 17 | **0.9%** |
+| Pipelock 3.8.0 (strict) | 97 | 39 | **27** | 5.8% |
+| gateward 0.3.0 | 43 | 38 | 9 | 2.3% |
+| mcp-context-protector (no guardrail model) | 10 | 0 | 2 | 5.1% |
+| mcp-watchdog 0.1.9 | 10 (+160 alerted) | 0 (+462 alerted) | 1 (+21 alerted) | 1.7% |
+
+Pipelock stops more of the argument-exfiltration benchmark. The cross-server chains
+aren't in this table because they need gatehouse's multi-process setup. The fairness
+notes in [`docs/evaluation.md`](docs/evaluation.md#fairness-notes) give the reasons and
+caveats, including that I wrote the suite.
+
+Added latency of a `tools/call`, all layers on (p50 / p99): +1.27 / +1.39 ms at 1 KiB,
++20.6 / +20.9 ms at 64 KiB, and +165 / +165 ms at 1 MiB.
 
 ## Architecture
 

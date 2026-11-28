@@ -102,13 +102,20 @@ def _pct(num: int, den: int) -> str:
     return f"{100 * num / den:.1f}%" if den else "n/a"
 
 
+def _timed(row: dict[str, Any]) -> bool:
+    """False when gatehouse blocked every timed call (a judge layer whose circuit breaker
+    locked the session): those timings are of a refusal, not of a proxied call."""
+    g = row["gatehouse"]
+    return not (g.get("n") and g.get("blocked", 0) >= g["n"])
+
+
 def _latency(root: Path, layers: str) -> tuple[str, str]:
     report = _load(root / f"bench-{layers}" / "latency.json")
     if report is None:
         return "n/a", "n/a"
     rows = cast(list[dict[str, Any]], report["results"])
     row = next((r for r in rows if r["size"] == 1024), None)
-    if row is None:
+    if row is None or not _timed(row):
         return "n/a", "n/a"
     d, g = row["direct"], row["gatehouse"]
     return f"+{g['p50'] - d['p50']:.2f}", f"+{g['p95'] - d['p95']:.2f}"
@@ -121,6 +128,8 @@ def _latency_rows(root: Path, layers: str) -> list[dict[str, Any]]:
         return []
     out: list[dict[str, Any]] = []
     for row in cast(list[dict[str, Any]], report["results"]):
+        if not _timed(row):
+            continue
         d, g = row["direct"], row["gatehouse"]
         out.append(
             {

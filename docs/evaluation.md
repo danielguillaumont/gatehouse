@@ -1,5 +1,8 @@
 # Evaluation
 
+The current results are in [Evaluation v2](#evaluation-v2-m6-v030). The sections after it
+are the earlier milestones' measurements, kept as they were run.
+
 Every number on this page comes from a command in this repo. The run is recorded with its
 commit, Python version, OS and date. CI reruns the attack suite and benchmark on every
 push and posts the report in the job summary.
@@ -44,6 +47,190 @@ Metrics:
 
 - recall = prevented / attacks
 - precision = prevented / (prevented + benign false positives)
+
+## Evaluation v2 (M6, v0.3.0)
+
+Every number in this section comes from one GitHub Actions run:
+[46112090830](https://github.com/danielguillaumont/gatehouse/actions/runs/46112090830)
+(workflow `evaluation.yml`, commit `37da760`, gatehouse 0.3.0, Python 3.12.16, Ubuntu
+runners, 2026-11-28). The artifact `evaluation` holds the collated tables
+(`evaluation.md`, `evaluation.json`). The per-job artifacts hold every raw report and
+the evidence events.
+
+**Reproduce:** `gh workflow run evaluation.yml`. One cell, locally:
+
+```
+uv run python -m attacks.heldout2.mutate --check          # the frozen set is intact
+uv run python -m attacks.external prepare --out .cache/external   # MCPTox, egress-bench
+uv run python -m attacks run --target gatehouse --layers full \
+    --scenarios attacks/heldout2/scenarios --out reports/gatehouse__full__heldout2
+uv run python -m bench.latency --iterations 100 --sizes 1024 65536 1048576 \
+    --layers full --out reports/bench-full
+uv run python -m attacks.evaluate collate reports --out reports/evaluation
+```
+
+### The sets
+
+| Set | Attacks | Benign | What it is |
+|---|---|---|---|
+| Suite | 102 | 38 | `attacks/scenarios/*.yaml`, written with the detectors (it includes held-out v1, which no longer measures anything, D-052). The 3 documented `bypass` scenarios are left out. |
+| Held-out v2 | 330 | 119 | 54 seeds through 22 mutation operators, frozen and hashed before any M6 detector work (D-046). **The number to read.** |
+| MCPTox | 485 | 362 | Poisoned tool definitions, from the public benchmark at a pinned commit (D-047). |
+| agent-egress-bench | 32 | 12 | Exfiltration through tool arguments, the MCP stdio cases (D-047). |
+
+That makes 531 benign scenarios in all. A false positive is *any* change to benign
+traffic.
+
+### Structural result (prevents)
+
+The cross-server exfiltration chains (`flow.*`, M5) are what a content detector can't
+stop: the injections in them are polite requests that no rule flags.
+
+| Layers | Chains completed | Approval prompts per benign flow task | per benign scenario |
+|---|---|---|---|
+| `observe`, `pinning`, `detectors`, `v0.1` | 8 / 8 | 0 | 0 |
+| `structural` (pinning + flow control, no content enforcement) | **0 / 8** | 0.50 | 0.006 |
+| `full` | **0 / 8** | 0.50 | 0.006 |
+
+Flow control (`flow.mode: approve`) prevents all 8 chains. It costs 3 approval prompts
+over the 6 benign multi-server tasks, which the simulated user accepts. That is 0.006
+prompts per benign scenario over the 531, since single-server traffic never
+completes the Rule-of-Two trifecta.
+
+### Ablation (detection: detects, blocks high and critical)
+
+Attacks stopped per set, the false positives over all 531 benign scenarios, and the
+added latency at 1 KiB:
+
+| Layers | Suite | Held-out v2 | MCPTox | egress-bench | FP | p50 ms | p95 ms |
+|---|---|---|---|---|---|---|---|
+| `observe` | 3 / 102 | 0 / 330 | 0 / 485 | 0 / 32 | 0.0% (0) | +0.74 | +0.76 |
+| `pinning` | 12 / 102 | 0 / 330 | 0 / 485 | 0 / 32 | 0.0% (0) | +0.73 | +0.79 |
+| `detectors` | 81 / 102 | 123 / 330 | 62 / 485 | 17 / 32 | 0.9% (5) | +0.74 | +0.75 |
+| `v0.1` | 87 / 102 | 123 / 330 | 62 / 485 | 17 / 32 | 0.9% (5) | +0.73 | +0.80 |
+| `structural` | 20 / 102 | 0 / 330 | 0 / 485 | 0 / 32 | 0.0% (0) | +1.27 | +1.35 |
+| `full` | 95 / 102 | 123 / 330 | 62 / 485 | 17 / 32 | 0.9% (5) | +1.27 | +1.32 |
+| `judge` | 99 / 102 | 193 / 330 | n/a | n/a | 20.4% (32 / 157) | n/a | n/a |
+
+How to read the rows:
+- **`observe` stops 3 suite attacks.** These are protocol violations that gatehouse
+  always rejects: a duplicate tool name, a frame with duplicate JSON keys and a
+  JSON-RPC batch. It still runs every detector,
+  in log mode, which is why its latency equals `detectors`.
+- **Held-out v2 and the external sets come from content detection alone.** Pinning and
+  flow control add nothing there: each scenario is one session on one server, with no
+  rug pull.
+- **`judge`** = `full` plus a local LLM judge (Qwen2.5 1.5B Instruct via Ollama, on CPU)
+  in `enforce` mode on tool results (D-053).
+  - It raises held-out v2 from 123 to 193 of 330. The 70 extra catches are spread
+    over the mutation operators. 22 of them come from the paraphrase and translation
+    operators, and the rest from casing, splitting, base64, lexical swaps, invisible
+    characters and others.
+  - But it changes 32 of 157 benign scenarios (suite and held-out v2, the sets it runs
+    on): 22 of 119 in held-out v2 and 10 of 38 in the suite. Among them are a security
+    article, a non-English message and a refund note.
+  - That FP rate is why classifiers default to `shadow` (D-050), and why no
+    configuration with a model in `enforce` is recommended.
+  - The bench can't time this row. Once the judge withholds a result, the circuit
+    breaker locks the session, so every timed call was a refusal (30 of 30). The
+    collator now prints n/a for such rows, and the latency comes from the verdict
+    events below.
+
+**Before and after M6.** The same workflow at commit `1e28862` (gatehouse 0.2.0, before
+the M6 detectors), run
+[46106751618](https://github.com/danielguillaumont/gatehouse/actions/runs/46106751618),
+`full` row:
+
+| | Suite | Held-out v2 | MCPTox | egress-bench | FP |
+|---|---|---|---|---|---|
+| before (0.2.0) | 79 / 92 | 112 / 330 | 62 / 485 | 16 / 32 | 1.0% (5 / 522) |
+| after (0.3.0) | 95 / 102 | 123 / 330 | 62 / 485 | 17 / 32 | 0.9% (5 / 531) |
+
+- The suite grew by the 10 `m6-rules` attacks and 9 benign twins, which were written
+  with the fixes. The suite is not evidence of generalisation.
+- Held-out v2 is: **+11 attacks (33.9% → 37.3%) with no new false positive**. It was
+  frozen before the fixes were written.
+
+### Latency per layer
+
+The added round trip of one `tools/call` (argument and result of the given size),
+gatehouse minus direct, in ms: p50 / p95 / p99, over 100 iterations. Command:
+`python -m bench.latency --layers <row>`.
+
+| Layers | 1 KiB | 64 KiB | 1 MiB |
+|---|---|---|---|
+| `observe` | +0.74 / +0.76 / +0.76 | +8.75 / +8.82 / +8.97 | +119.96 / +121.86 / +131.79 |
+| `pinning` | +0.73 / +0.79 / +0.92 | +8.75 / +8.82 / +8.99 | +119.41 / +119.74 / +119.84 |
+| `detectors` | +0.74 / +0.75 / +0.76 | +8.74 / +8.84 / +9.11 | +119.56 / +120.10 / +120.56 |
+| `v0.1` | +0.73 / +0.80 / +0.80 | +8.78 / +8.82 / +8.84 | +119.19 / +121.02 / +121.24 |
+| `structural` | +1.27 / +1.35 / +1.38 | +20.62 / +20.75 / +20.94 | +165.16 / +167.57 / +167.82 |
+| `full` | +1.27 / +1.32 / +1.39 | +20.57 / +20.81 / +20.87 | +164.77 / +164.95 / +165.19 |
+
+- Flow control costs about +0.5 ms at 1 KiB, +12 ms at 64 KiB and +45 ms at 1 MiB.
+  That cost is the provenance index: keyed span fingerprints of private-data results,
+  kept in SQLite (D-043).
+- The content detectors cost nothing measurable over `observe`, because `observe`
+  runs them too.
+
+**Classifier verdict latency**, from the `classifier.verdict` events of the judge
+runs (`python -m attacks.evaluate verdict-latency reports`):
+
+| Classifier | Verdicts | p50 ms | p95 ms | max ms | No answer |
+|---|---|---|---|---|---|
+| Ollama judge, Qwen2.5 1.5B, GitHub CPU runner | 352 | 714.1 | 1758.1 | 3668.4 | 0 |
+
+In `enforce` mode this delay is added to every tool result. Prompt Guard 2 and Prompt
+Shields are not measured (D-050): the first is gated on Hugging Face, and the second
+needs an Azure resource.
+
+### Comparison (same runner image, same commit)
+
+Prevented / detected only / missed, and false positives over all benign scenarios.
+gatehouse is the `full` row, in its default `flow.mode: approve`.
+
+| Target | Suite (written with gatehouse's detectors) | Held-out v2 (frozen) | MCPTox (poisoned tools) | agent-egress-bench | FP |
+|---|---|---|---|---|---|
+| gatehouse 0.3.0 | 95 / 1 / 6 | **123** / 16 / 191 | **62** / 15 / 408 | 17 / 5 / 10 | **0.9%** (5 / 531) |
+| Pipelock 3.8.0 (strict) | 46 / 10 / 33 | 97 / 0 / 233 | 39 / 0 / 446 | **27** / 4 / 1 | 5.8% (31 / 531) |
+| mcp-context-protector `05e56c1` (no guardrail provider) | 16 / 0 / 73 | 10 / 0 / 320 | 0 / 0 / 485 | 2 / 0 / 30 | 5.1% (27 / 531) |
+| gateward 0.3.0 | 28 / 0 / 61 | 43 / 0 / 287 | 38 / 0 / 447 | 9 / 0 / 23 | 2.3% (12 / 531) |
+| mcp-watchdog 0.1.9 | 4 / 37 / 48 | 10 / **160** / 160 | 0 / **462** / 23 | 1 / 21 / 10 | 1.7% (9 / 531) |
+| direct (no proxy) | 0 / 0 / 102 | 0 / 0 / 330 | 0 / 0 / 485 | 0 / 0 / 32 | 0.0% |
+
+What it says:
+- **Held-out v2 and MCPTox:** gatehouse stops the most, at the lowest FP rate.
+- **agent-egress-bench:** Pipelock stops the most (27 of 32 against 17) of these
+  argument-exfiltration cases. Closing that gap is an open item in `docs/NEXT.md`.
+- **mcp-watchdog** blocks little but alerts on most poisoned definitions (462 of
+  485). A SOC that triages alerts gets signal from it. A user who relies on it to stop
+  attacks gets little.
+
+### Fairness notes
+
+- **Different denominators on the suite.** Competitors get 89 suite attacks, not 102.
+  The 8 `flow.*` chains and 5 self-protection scenarios need several gatehouse
+  processes or gatehouse's own CLI (`targets: [gatehouse]`). The suite was also written
+  alongside gatehouse's detectors, so treat that column as a regression check. The
+  frozen and external sets are the comparison.
+- **Default configurations** (D-051). The invocations were checked against each tool's
+  source at the pinned version:
+  - Pipelock runs its `strict` preset;
+  - mcp-context-protector runs without LlamaFirewall, which needs the gated Prompt
+    Guard 2 model, so it gets pinning only;
+  - gateward and mcp-watchdog run with no configuration.
+- **Schema rewriting is not counted as a change** (D-053). mcp-context-protector
+  rebuilds every tool schema and adds `required: []` and `description: ""`. Run
+  46106751618 counted that as an altered listing (66.9% FP). Listings are now compared
+  up to these no-op keywords, for every target.
+- **Pipelock's pinning is per process** (D-051). Its baseline is set on each start, so
+  it can't see a rug pull across restarts, by design.
+- **gateward's audit log adds nothing to score.** Its blocks are already visible to the
+  client, and its only other rows are framing errors (D-051).
+- **Detected only** counts a tool's own alert channel: Pipelock's stderr findings,
+  mcp-watchdog's alerts and gatehouse's `detection` events. The goal was reached, but a
+  SOC would have been told.
+- **One run, one runner image.** There's no variance estimate. The scenarios are
+  deterministic, but the judge and the latency are not.
 
 ## Results: M2 (content detectors)
 
