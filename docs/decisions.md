@@ -1106,3 +1106,14 @@ only tighten controls.**
   - check that a running router blocks the next call with the incident in the
     reason.
 
+**D-056 (2026-11-28) Release tags point at the evaluated commit.**
+- *Decision.* v0.3.0 is tagged at `37da760`, the commit evaluation run 46112090830
+  measured, not at the later commit that holds its write-up. The release notes carry
+  the numbers and the run link, and `docs/evaluation.md` on `main` carries the full
+  tables.
+- *Why.* The tag must be exactly what was measured. M7 commits had already landed on
+  `main` by the time the run finished (OIDC in `serve`, `gatehouse listen`), and they
+  belong to v0.4.0.
+- *Alternative.* Tag HEAD and rerun the evaluation. Rejected: that costs about an hour
+  of CI and would measure code that the release notes don't describe.
+
