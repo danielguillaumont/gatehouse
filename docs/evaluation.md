@@ -133,6 +133,49 @@ The suite found real bugs, which is the point of building it before claiming num
   `unicode-tags` predicate could never match. These were scenario bugs, caught because
   the `direct` baseline must show every attack succeeding.
 
+## Protocol fidelity (M4)
+
+A security proxy that breaks the protocol gets switched off, so M4 measures what
+gatehouse does to protocol traffic it has no objection to.
+
+**Official conformance suite.** Command: `uv run --with click python
+scripts/conformance.py --server-dir <everything-server> --out reports/conformance`.
+Harness `@modelcontextprotocol/conformance@0.2.0-alpha.11` (the version MCP Python SDK
+2.3.0's own CI pins), against that SDK's `examples/servers/everything-server` at tag
+`v2.3.0`, `--suite all` per wire, run directly and through `gatehouse serve` (policy
+allows everything, pinning off). Windows 11, Python 3.12.2, Node 26.13.1, 2026-11-27,
+commit `8bcb6f7`. The `conformance` workflow reruns it in CI.
+
+| Wire | Scenarios direct | Through gatehouse | Checks through gatehouse |
+|---|---|---|---|
+| 2025-11-25 | 33/33 | 33/33 | 84 passed, 2 warnings |
+| 2026-07-28 | 40/40 | 40/40 | 151 passed |
+
+The two warnings are in `server-sse-polling`: gatehouse doesn't pass the upstream's
+priming event and `retry` hint downstream. When the upstream closes a stream before
+answering, gatehouse resumes it itself (GET with `Last-Event-ID`, D-039) and the client
+gets the inspected result on its original stream, so the client has nothing to resume.
+
+The first run found five gatehouse bugs, all fixed in `8bcb6f7`. One hung the client: a
+2026-07-28 request with a broken envelope. One used the wrong -32022 version list. One
+misparsed a `=?base64?` value without its closing `?=`. One dropped an id-less upstream
+error. One waited for the request timeout when an upstream stream closed early.
+
+**A real client.** Claude Code 2.1.332 (`claude -p ... --mcp-config ...
+--strict-mcp-config --model haiku`, 2026-11-27) called a tool through gatehouse on
+three servers:
+- a dual-era stdio server (`demo/weather_server.py`, SDK 2.3.0), which negotiated
+  2026-07-28;
+- a legacy-only stdio server (`attacks/mockserver.py`), which used the 2025-11-25
+  handshake;
+- the weather server over Streamable HTTP behind `gatehouse serve`, which negotiated
+  2026-07-28.
+
+gatehouse's events confirm the version each connection used. The first run found a bug:
+Claude Code sends `server/discover` and `initialize` back to back, and gatehouse latched
+the legacy era on the forwarded `initialize`, so the modern server's tools never loaded
+(fixed in `ea8473e`, ADR-0002).
+
 ## Latency
 
 Command: `uv run python -m bench.latency --out reports/bench` (default iterations), at

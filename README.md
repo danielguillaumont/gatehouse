@@ -104,6 +104,26 @@ With Claude Code:
 claude mcp add weather -- uv run gatehouse run --name weather --policy demo/policy.yaml -- uv run python demo/weather_server.py
 ```
 
+Over Streamable HTTP, `gatehouse serve` is a reverse proxy in front of the server's URL.
+It needs the `http` extra (`uv sync --extra http`):
+
+```
+uv run gatehouse serve --name weather --policy demo/policy.yaml --upstream http://127.0.0.1:8000/mcp
+claude mcp add --transport http weather http://127.0.0.1:8848/mcp
+```
+
+It listens on loopback unless you pass `--allow-remote`. It never forwards the client's
+`Authorization` header or cookies: give it its own upstream credential with
+`--upstream-bearer-env VAR`. In 2026-07-28 requests it rejects routing headers that
+disagree with the body, and it rebuilds every upstream header from the body it
+inspected ([ADR-0003](docs/adr/0003-http-reverse-proxy.md)).
+
+Both transports speak MCP 2024-11-05 through 2025-11-25 (the `initialize` handshake) and
+2026-07-28 (per-request `_meta`, `server/discover`, input rounds), with the same policy
+and detections on each ([ADR-0002](docs/adr/0002-protocol-eras.md)). In 2026-07-28,
+approval prompts are an input round that gatehouse signs and binds to the exact call
+([ADR-0004](docs/adr/0004-mrtr-approval.md)).
+
 A policy is a short YAML file. An invalid one blocks everything.
 
 ```yaml
@@ -121,6 +141,7 @@ servers:
 | Command | What it does |
 |---|---|
 | `gatehouse run --name N --policy P -- CMD...` | Proxy one stdio MCP server (stdout carries only MCP) |
+| `gatehouse serve --name N --policy P --upstream URL` | Proxy one Streamable HTTP MCP server |
 | `gatehouse pin --name N [--tool T] -- CMD...` | Approve the server's current tool definitions |
 | `gatehouse diff --name N -- CMD...` | Show what changed since approval (exit 1 on drift) |
 | `gatehouse validate-policy P` / `policy-hash P` | Check a policy, or print its hash for `--expect-policy-sha256` |

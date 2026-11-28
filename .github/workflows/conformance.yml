@@ -1,0 +1,58 @@
+# The official MCP conformance suite against the MCP Python SDK's everything-server,
+# directly and through `gatehouse serve`. Fails when gatehouse adds a failure over the
+# direct baseline. Harness and server versions are pinned in scripts/conformance.py and
+# below (SDK tag = the version in the dev lock).
+name: conformance
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/gatehouse/proxy/**"
+      - "src/gatehouse/protocol.py"
+      - "scripts/conformance.py"
+      - ".github/workflows/conformance.yml"
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: conformance-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SDK_TAG: v2.3.0
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - run: uv sync --locked --all-extras
+      - name: Fetch the SDK everything-server (${{ env.SDK_TAG }})
+        run: |
+          mkdir -p "$RUNNER_TEMP/sdk"
+          curl -fsSL "https://codeload.github.com/modelcontextprotocol/python-sdk/tar.gz/refs/tags/$SDK_TAG" \
+            | tar -xz -C "$RUNNER_TEMP/sdk" --wildcards "*/examples/servers/everything-server/*"
+      - name: Conformance, direct and through gatehouse
+        run: |
+          SERVER_DIR=$(ls -d "$RUNNER_TEMP"/sdk/*/examples/servers/everything-server)
+          uv run --with click python scripts/conformance.py --server-dir "$SERVER_DIR" --out reports/conformance
+      - name: Report
+        if: always()
+        run: cat reports/conformance/conformance.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: conformance
+          path: reports/conformance/
