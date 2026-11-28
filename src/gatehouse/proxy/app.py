@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -205,6 +206,21 @@ def build_http_app(opts: RunOptions, serve_opts: ServeOptions) -> tuple[Any, Emi
     return proxy, emitter
 
 
+async def _serve_quietly(server: Any) -> None:
+    """Run uvicorn with an exception handler that drops the connection-reset callbacks
+    Windows' proactor loop logs whenever a client hangs up abruptly. They are noise on
+    stderr, where gatehouse's own errors must stay readable; anything else is logged."""
+    loop = asyncio.get_running_loop()
+
+    def handler(lp: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        if isinstance(context.get("exception"), ConnectionResetError):
+            return
+        lp.default_exception_handler(context)
+
+    loop.set_exception_handler(handler)
+    await server.serve()
+
+
 def serve(opts: RunOptions, serve_opts: ServeOptions) -> int:
     import uvicorn
 
@@ -224,7 +240,7 @@ def serve(opts: RunOptions, serve_opts: ServeOptions) -> int:
     )
     rc = 1
     try:
-        server.run()
+        asyncio.run(_serve_quietly(server))
         rc = 0
         return rc
     finally:
