@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-28** (v0.2.0 released: M5 done; M6 next).
+Last updated **2026-11-28** (v0.2.0 released; M6 in progress).
 
 ## Status
 
@@ -114,23 +114,48 @@ Acceptance, all from GitHub Actions run
   on `tests/policy/fixtures/policy-flow-broken.yaml`.
 - **Latency, 1 KiB p95:** +1.98 ms with Cedar, +2.67 ms with flow control.
 
-### M6 → v0.3.0 (next)
+### M6 → v0.3.0 (in progress)
 
 Evaluation first, then detectors. Heavy runs go in GitHub Actions, not locally.
 
-1. Held-out v2: a mutation engine, frozen and hashed before any detector work.
-2. External corpora: MCPTox and agent-egress-bench (check their licenses first).
-3. A benign corpus of 200+ scenarios.
-4. An ablation table.
-5. Competitors re-run: gateward, mcp-watchdog, Pipelock strict, mcp-context-protector.
-6. Optional: a live agent driven by Ollama.
-7. Detectors:
-   - an async detector interface;
-   - Prompt Guard 2 (ONNX);
-   - Prompt Shields;
-   - an Ollama judge in shadow mode;
-   - per-rule severity overrides;
-   - the rule fixes listed below.
+Done:
+1. **Held-out v2** (`fcd1a58`; D-046): 54 seeds (34 attack, 20 benign) put through 22 mutation operators,
+   including frozen LLM paraphrases and translations. That gives 330 attacks and 119
+   benign. It was frozen and hashed (`attacks/heldout2/MANIFEST.json`, checked in CI)
+   before any M6 detector work.
+2. **External corpora** (D-047): MCPTox (485 attacks, 362 benign) and agent-egress-bench
+   (32 attacks, 12 benign). Both are fetched at pinned commits, hash-verified and
+   converted, and never committed.
+3. **Benign corpus:** 522 benign scenarios over the four sets.
+4. **Ablation** (D-048): six layer combinations, plus `judge` (D-053), with one
+   workflow for all tables (`evaluation.yml`, collated by `attacks.evaluate`).
+5. **Competitors** (D-051, D-053):
+   - gateward 0.3.0, mcp-watchdog 0.1.9, Pipelock 3.8.0 (strict) and
+     mcp-context-protector `05e56c1`, invocations checked against their source;
+   - listings compared up to no-op schema keywords.
+6. **Detectors:**
+   - per-rule severity overrides (`856504e`; D-049);
+   - classifiers behind one async interface (`657fb6f`; ADR-0007, D-050): Prompt
+     Guard 2 (ONNX), Prompt Shields and the Ollama judge, each in enforce, alert or
+     shadow mode;
+   - the NEXT.md rule fixes (`5d19af8`; D-052).
+
+Baseline before the detectors (run
+[46106751618](https://github.com/danielguillaumont/gatehouse/actions/runs/46106751618),
+commit `1e28862`): `full` prevented 112/330 of held-out v2 and completed 0/8 chains, with
+1.0% FP.
+
+Remaining:
+- the evaluation run on the detector commit (run
+  [46110435400](https://github.com/danielguillaumont/gatehouse/actions/runs/46110435400)),
+  then the "Evaluation v2" write-up in `docs/evaluation.md` and the README headline;
+- optional: a live agent driven by Ollama (about 20 tasks, labelled "indicative");
+- the M6 explainer, then tag v0.3.0.
+
+Not possible without the owner (noted for M7):
+- **Prompt Guard 2** is gated on Hugging Face, so the ONNX path is tested with fakes
+  and no Prompt Guard numbers are claimed.
+- **Prompt Shields** needs an Azure Content Safety resource.
 
 ## v0.1 milestone summary
 
