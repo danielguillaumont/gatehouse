@@ -1,0 +1,51 @@
+id: a66509bf-da72-4198-9f39-67f51f8f9f64
+name: gatehouse - Model-based classifier flagged prompt injection, or failed closed
+description: |
+  This fires on two kinds of classifier.verdict event (ADR-0007):
+  - a classifier in alert or enforce mode scored a tool result or tool definition as
+    prompt injection;
+  - an enforce-mode classifier gave no answer within its budget, so gatehouse withheld
+    the content (fail closed).
+
+  Shadow-mode verdicts are excluded: shadow is for measuring a model before trusting
+  it. A hit often means an injection that no regex rule matched (a paraphrase or a
+  translation). Unavailability means detections are being withheld and users are
+  being blocked until the model is back.
+severity: Medium
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - InitialAccess
+  - Execution
+relevantTechniques:
+  - T1190
+query: |
+  GatehouseEvents_CL
+  | where EventType == "classifier.verdict" and tostring(Details.Mode) != "shadow"
+  | where RuleId == "prompt-injection" or Action == "fail_closed"
+  | extend Mode = tostring(Details.Mode), Kind = tostring(Details.Kind),
+           Score = todouble(Details.Score)
+  | summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+              Hits = countif(RuleId == "prompt-injection"),
+              Unavailable = countif(RuleId == "classifier-unavailable"),
+              MaxScore = max(Score), Modes = make_set(Mode, 3), Kind = take_any(Kind)
+      by Host, AgentSessionId, ServerName, ToolName, Classifier = DetectorId
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  AgentSessionId: AgentSessionId
+  Classifier: Classifier
+  Hits: Hits
+  Unavailable: Unavailable
+alertDetailsOverride:
+  alertDisplayNameFormat: "{{Classifier}} on {{ServerName}}/{{ToolName}}: {{Hits}} injection verdict(s), {{Unavailable}} unavailable"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

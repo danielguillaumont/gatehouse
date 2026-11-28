@@ -1,0 +1,23 @@
+// Hunting: destinations that egress tool calls rarely send to.
+// Details.EgressDomains holds the registrable domains of URL hosts and email addresses
+// in an egress call's arguments (D-057). Subdomains, paths and local parts are never
+// logged. A domain that only one host and one or two sessions ever sent to, and that
+// isn't one of yours, is the classic shape of an injected "send it to
+// partners@attacker.example". Add your own domains to `ours`.
+let lookback = 30d;
+let max_hosts = 1;
+let max_sessions = 2;
+let ours = dynamic(["mycorp.example"]);
+let anchor = toscalar(GatehouseEvents_CL | summarize max(TimeGenerated));
+GatehouseEvents_CL
+| where TimeGenerated > anchor - lookback and EventType == "tool.call"
+| where isnotempty(Details.EgressDomains)
+| mv-expand Domain = Details.EgressDomains to typeof(string)
+| where Domain !in (ours)
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Calls = count(), Blocked = countif(Action in ("blocked", "denied")),
+            Hosts = dcount(Host), Sessions = dcount(AgentSessionId),
+            Tools = make_set(strcat(ServerName, "/", ToolName), 10)
+    by Domain
+| where Hosts <= max_hosts and Sessions <= max_sessions
+| order by FirstSeen desc

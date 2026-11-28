@@ -63,8 +63,10 @@ class Issuer:
         return jwt.encode(body, self.key, algorithm="RS256", headers={"kid": kid or self.kid})
 
 
-def serve(port: int) -> None:
-    issuer = Issuer(f"http://127.0.0.1:{port}")
+def make_server(port: int) -> tuple[ThreadingHTTPServer, Issuer]:
+    """The issuer on 127.0.0.1:port (0 picks a free port). Call ``serve_forever``."""
+    server = ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
+    issuer = Issuer(f"http://127.0.0.1:{server.server_address[1]}")
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, status: int, body: dict[str, Any]) -> None:
@@ -94,8 +96,9 @@ def serve(port: int) -> None:
         def log_message(self, format: str, *args: Any) -> None:
             return  # quiet: stdout and stderr stay clean in tests
 
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+    server.RequestHandlerClass = Handler
+    return server, issuer
 
 
 if __name__ == "__main__":
-    serve(int(sys.argv[1]))
+    make_server(int(sys.argv[1]))[0].serve_forever()

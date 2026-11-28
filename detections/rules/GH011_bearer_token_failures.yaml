@@ -1,0 +1,48 @@
+id: cc7b33b6-48d8-4660-91a4-5fcb7d0575ea
+name: gatehouse - Burst of refused bearer tokens at an MCP endpoint
+description: |
+  Ten or more requests from one client address were refused by `gatehouse serve
+  --oidc-issuer` within five minutes (ADR-0008). The tokens were missing, forged,
+  expired, for another audience, or lacking a required role. One expired token is
+  routine. A burst is token spraying, a stolen token being replayed after expiry, or
+  a client configured against the wrong tenant. Behind a reverse proxy, ClientAddress
+  is the proxy's address.
+severity: Medium
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - CredentialAccess
+  - InitialAccess
+relevantTechniques:
+  - T1110
+  - T1550
+query: |
+  let threshold = 10;
+  GatehouseEvents_CL
+  | where EventType == "auth.denied"
+  | extend ClientAddress = tostring(Details.ClientAddress), Error = tostring(Details.Error)
+  | summarize Failures = count(), Errors = make_set(Error, 5), Reasons = make_set(Reason, 10),
+              FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+      by Host, ServerName, ClientAddress, Window = bin(TimeGenerated, 5m)
+  | where Failures >= threshold
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+  - entityType: IP
+    fieldMappings:
+      - identifier: Address
+        columnName: ClientAddress
+customDetails:
+  ClientAddress: ClientAddress
+  Failures: Failures
+alertDetailsOverride:
+  alertDisplayNameFormat: "{{Failures}} refused bearer tokens from {{ClientAddress}} at {{ServerName}}"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

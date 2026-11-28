@@ -249,7 +249,11 @@ class HttpProxy:
             action=EventAction.BLOCKED,
             direction=Direction.CLIENT_TO_SERVER,
             reason=exc.reason,
-            details={"Status": exc.status, "Error": exc.error},
+            details={
+                "Status": exc.status,
+                "Error": exc.error,
+                "ClientAddress": _client_address(scope),
+            },
         )
         base = self._resource(scope, headers).removesuffix(self.cfg.path)
         challenge = (
@@ -687,6 +691,14 @@ def _attribute(raw: bytes, rid: object) -> bytes:
     if msg is not None and msg.get("id") is None and "error" in msg and "result" not in msg:
         return json.dumps({**msg, "id": rid}).encode("utf-8")
     return raw
+
+
+def _client_address(scope: Scope) -> str | None:
+    """The peer's IP address (no port), as the ASGI server saw it."""
+    client = scope.get("client")
+    if isinstance(client, (list, tuple)) and client:
+        return str(client[0])[:64]  # pyright: ignore[reportUnknownArgumentType]
+    return None
 
 
 def _error(rid: object, code: int, message: str) -> dict[str, Any]:

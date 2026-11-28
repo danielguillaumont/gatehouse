@@ -1,0 +1,50 @@
+id: 28f85371-c1b1-494b-b1b5-86949744a09d
+name: gatehouse - A response control engaged (kill switch, circuit breaker, remote signal)
+description: |
+  A response control engaged on a gatehouse host (ADR-0006, D-055). It is one of:
+  - the kill switch: every MCP tool call on the machine is blocked;
+  - the circuit breaker: an agent session was locked after repeated high findings;
+  - a remote control signal, from the Sentinel playbook through the control queue,
+    which was applied or dropped.
+
+  Each one stops work on the machine until a human acts. Either an attack was
+  contained and needs follow-up, or someone is using the controls to deny service.
+  The first engaged event per process is reported; release events are not.
+severity: Medium
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 15m
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Impact
+relevantTechniques:
+  - T1489
+query: |
+  GatehouseEvents_CL
+  | where (EventType == "control.kill_switch" and tostring(Details.State) == "engaged")
+      or EventType == "control.circuit_breaker"
+      or (EventType == "control.signal" and tostring(Details.Outcome) in ("applied", "dropped"))
+  | extend Control = case(
+        EventType == "control.signal", strcat("remote ", tostring(Details.SignalAction)),
+        EventType == "control.kill_switch", "kill switch",
+        "circuit breaker"),
+      Incident = tostring(Details.Incident),
+      Strikes = toint(Details.Strikes)
+  | project TimeGenerated, Host, AgentSessionId, ServerName, Control, Severity, Action,
+            Reason, Incident, Strikes
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  AgentSessionId: AgentSessionId
+  Control: Control
+  Incident: Incident
+alertDetailsOverride:
+  alertDisplayNameFormat: "gatehouse {{Control}} engaged on {{Host}}"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

@@ -1,0 +1,17 @@
+// Hunting: tools an agent used for the first time recently.
+// "Agent" is the MCP client (ClientName, e.g. claude-code) on one host. A tool that an
+// agent has never called in the baseline and suddenly calls is worth a look,
+// especially an egress or exec tool: injected instructions often reach for tools the
+// user's normal work never needs. Times are relative to the newest event, so the query
+// works on any time range you give it.
+let baseline = 30d;
+let recent = 1h;
+let anchor = toscalar(GatehouseEvents_CL | summarize max(TimeGenerated));
+GatehouseEvents_CL
+| where TimeGenerated > anchor - baseline and EventType == "tool.call"
+| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+            Calls = count(), Blocked = countif(Action in ("blocked", "denied")),
+            Sessions = dcount(AgentSessionId), Risk = take_any(ToolRisk)
+    by Host, ClientName, ServerName, ToolName
+| where FirstSeen > anchor - recent
+| order by Risk desc, FirstSeen desc

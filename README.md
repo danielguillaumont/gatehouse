@@ -41,7 +41,7 @@ agent, blocks the call and logs the detection. Source: [`demo/`](demo/README.md)
   Optional model-based classifiers (Prompt Guard 2, Azure Prompt Shields, a local
   Ollama judge) run in shadow, alert or enforce mode, behind a latency budget.
 - **Reports** every decision as a redacted event in a published schema
-  (`GatehouseEvents_CL`): no argument values, no secrets, only HMAC fingerprints. Six
+  (`GatehouseEvents_CL`): no argument values, no secrets, only HMAC fingerprints. Eleven
   Sentinel analytics rules, including cross-server injection-then-exfiltration, are tested
   in a real Kusto engine in CI.
 

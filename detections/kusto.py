@@ -159,8 +159,9 @@ def validate(k: Kusto) -> dict[str, list[str]]:
         key = f"hunting/{path.stem}"
         try:
             rows = k.query(_strip_comments(path.read_text(encoding="utf-8")))
-            results[key] = []
-            sys.stderr.write(f"{key}: {len(rows)} row(s) OK\n")
+            exp = expected.get(key)  # optional for hunting queries
+            results[key] = check_rule(rows, exp) if exp is not None else []
+            sys.stderr.write(f"{key}: {len(rows)} row(s) {results[key] or 'OK'}\n")
         except KustoError as exc:
             results[key] = [f"query failed: {exc}"]
     return results

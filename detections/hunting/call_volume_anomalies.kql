@@ -1,0 +1,21 @@
+// Hunting: unusual MCP tool-call volume per agent and host.
+// series_decompose_anomalies splits the hourly call count into seasonal (the working
+// day), trend and residual parts, and flags hours whose residual is far from normal. A
+// spike is an agent stuck in a loop, a scripted abuse of an MCP server, or bulk
+// exfiltration; a drop to zero while sessions continue can mean gatehouse was bypassed.
+// Needs at least a few days of data for the seasonality to mean anything.
+let lookback = 14d;
+let step = 1h;
+let anchor = toscalar(GatehouseEvents_CL | summarize max(TimeGenerated));
+GatehouseEvents_CL
+| where TimeGenerated > anchor - lookback and EventType == "tool.call"
+| make-series Calls = count() default = 0
+    on TimeGenerated from bin(anchor - lookback, step) to anchor step step
+    by Host, ClientName
+| extend (Anomalies, Score, Baseline) = series_decompose_anomalies(Calls, 2.5, -1, "linefit")
+| mv-expand TimeGenerated to typeof(datetime), Calls to typeof(long),
+            Anomalies to typeof(int), Score to typeof(double), Baseline to typeof(double)
+| where Anomalies != 0
+| project TimeGenerated, Host, ClientName, Calls, Baseline = round(Baseline, 1),
+          Score = round(Score, 2), Direction = iff(Anomalies > 0, "spike", "drop")
+| order by abs(Score) desc

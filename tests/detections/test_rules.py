@@ -58,7 +58,10 @@ COLUMNS = {c["name"] for c in json.loads(SCHEMA.read_text(encoding="utf-8"))["co
 def test_there_are_rules_and_expectations_for_each() -> None:
     expected: dict[str, Any] = yaml.safe_load(EXPECTED.read_text(encoding="utf-8"))
     assert len(RULES) >= 5
-    assert set(expected) == set(RULES)
+    hunting = {k for k in expected if k.startswith("hunting/")}
+    assert set(expected) - hunting == set(RULES)
+    for key in hunting:  # an expectation must name a real hunting query
+        assert (EXPECTED.parent / f"{key}.kql").is_file(), key
 
 
 @pytest.mark.parametrize("rule_id", sorted(RULES))

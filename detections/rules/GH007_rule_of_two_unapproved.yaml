@@ -1,0 +1,49 @@
+id: a0702ff8-1c8b-45ca-859e-3c71406122cf
+name: gatehouse - Agent session completed the Rule-of-Two trifecta without approval
+description: |
+  An agent session that had read untrusted input and private data made a call that
+  changes state or sends data out (the Rule of Two, ADR-0005), and no human approved it.
+  Either gatehouse blocked it (flow.mode enforce, or a declined approval), or, in
+  monitor mode, the call went through. This is the shape of a prompt-injection
+  exfiltration chain whatever the injection said, so it fires even when no content
+  detector did. Sessions where the user approved the call are left to the
+  rule_of_two_by_principal hunting query.
+severity: High
+requiredDataConnectors: []
+queryFrequency: 15m
+queryPeriod: 1h
+triggerOperator: gt
+triggerThreshold: 0
+tactics:
+  - Exfiltration
+  - Collection
+relevantTechniques:
+  - T1567
+  - T1119
+query: |
+  GatehouseEvents_CL
+  | where EventType == "flow.rule_of_two" and Action != "approved"
+  | extend FlowMode = tostring(Details.FlowMode),
+           SessionLabels = tostring(Details.SessionLabels),
+           ToolLabels = tostring(Details.ToolLabels)
+  | summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),
+              Calls = count(), Actions = make_set(Action, 5),
+              Tools = make_set(strcat(ServerName, "/", ToolName), 10),
+              FlowMode = take_any(FlowMode), SessionLabels = take_any(SessionLabels),
+              Host = take_any(Host)
+      by AgentSessionId
+entityMappings:
+  - entityType: Host
+    fieldMappings:
+      - identifier: HostName
+        columnName: Host
+customDetails:
+  AgentSessionId: AgentSessionId
+  FlowMode: FlowMode
+  Calls: Calls
+alertDetailsOverride:
+  alertDisplayNameFormat: "Rule of Two: an MCP agent session tried to send data out after reading untrusted input and private data"
+eventGroupingSettings:
+  aggregationKind: AlertPerResult
+version: 1.0.0
+kind: Scheduled

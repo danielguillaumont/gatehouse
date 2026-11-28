@@ -349,5 +349,305 @@
         "aggregationKind": "AlertPerResult"
       }
     }
+  },
+  {
+    "id": "a0702ff8-1c8b-45ca-859e-3c71406122cf",
+    "file": "GH007_rule_of_two_unapproved.yaml",
+    "properties": {
+      "displayName": "gatehouse - Agent session completed the Rule-of-Two trifecta without approval",
+      "description": "An agent session that had read untrusted input and private data made a call that\nchanges state or sends data out (the Rule of Two, ADR-0005), and no human approved it.\nEither gatehouse blocked it (flow.mode enforce, or a declined approval), or, in\nmonitor mode, the call went through. This is the shape of a prompt-injection\nexfiltration chain whatever the injection said, so it fires even when no content\ndetector did. Sessions where the user approved the call are left to the\nrule_of_two_by_principal hunting query.",
+      "severity": "High",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType == \"flow.rule_of_two\" and Action != \"approved\"\n| extend FlowMode = tostring(Details.FlowMode),\n         SessionLabels = tostring(Details.SessionLabels),\n         ToolLabels = tostring(Details.ToolLabels)\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Calls = count(), Actions = make_set(Action, 5),\n            Tools = make_set(strcat(ServerName, \"/\", ToolName), 10),\n            FlowMode = take_any(FlowMode), SessionLabels = take_any(SessionLabels),\n            Host = take_any(Host)\n    by AgentSessionId",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Exfiltration",
+        "Collection"
+      ],
+      "techniques": [
+        "T1119",
+        "T1567"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "AgentSessionId": "AgentSessionId",
+        "FlowMode": "FlowMode",
+        "Calls": "Calls"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "Rule of Two: an MCP agent session tried to send data out after reading untrusted input and private data"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "6b8ac5c4-d721-430f-a32b-4a6dc47bb4e3",
+    "file": "GH008_private_data_to_egress.yaml",
+    "properties": {
+      "displayName": "gatehouse - Private data copied into an outbound MCP tool call",
+      "description": "The arguments of an egress call contain text, or a secret, that the same agent\nsession read from a tool labelled private_data. They may be copied as is, or as\nbase64, hex or URL-encoded copies (provenance fingerprints, D-043). The source tools\nare named in MatchSummary; no data is in the event. Calls the user approved are\nexcluded. A paraphrase is not caught by this rule, but GH007 still catches it.",
+      "severity": "High",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType == \"flow.provenance_match\"\n| where RuleId in (\"private-data-copied\", \"private-secret-copied\") and Action != \"approved\"\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Attempts = count(), Actions = make_set(Action, 5),\n            Sources = make_set(MatchSummary, 5), Severity = take_any(Severity)\n    by Host, AgentSessionId, ServerName, ToolName, RuleId",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT1H",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Exfiltration"
+      ],
+      "techniques": [
+        "T1048",
+        "T1567"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "AgentSessionId": "AgentSessionId",
+        "ToolName": "ToolName",
+        "RuleId": "RuleId"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "Private data copied into {{ServerName}}/{{ToolName}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "28f85371-c1b1-494b-b1b5-86949744a09d",
+    "file": "GH009_response_control_engaged.yaml",
+    "properties": {
+      "displayName": "gatehouse - A response control engaged (kill switch, circuit breaker, remote signal)",
+      "description": "A response control engaged on a gatehouse host (ADR-0006, D-055). It is one of:\n- the kill switch: every MCP tool call on the machine is blocked;\n- the circuit breaker: an agent session was locked after repeated high findings;\n- a remote control signal, from the Sentinel playbook through the control queue,\n  which was applied or dropped.\n\nEach one stops work on the machine until a human acts. Either an attack was\ncontained and needs follow-up, or someone is using the controls to deny service.\nThe first engaged event per process is reported; release events are not.",
+      "severity": "Medium",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where (EventType == \"control.kill_switch\" and tostring(Details.State) == \"engaged\")\n    or EventType == \"control.circuit_breaker\"\n    or (EventType == \"control.signal\" and tostring(Details.Outcome) in (\"applied\", \"dropped\"))\n| extend Control = case(\n      EventType == \"control.signal\", strcat(\"remote \", tostring(Details.SignalAction)),\n      EventType == \"control.kill_switch\", \"kill switch\",\n      \"circuit breaker\"),\n    Incident = tostring(Details.Incident),\n    Strikes = toint(Details.Strikes)\n| project TimeGenerated, Host, AgentSessionId, ServerName, Control, Severity, Action,\n          Reason, Incident, Strikes",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "Impact"
+      ],
+      "techniques": [
+        "T1489"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "AgentSessionId": "AgentSessionId",
+        "Control": "Control",
+        "Incident": "Incident"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "gatehouse {{Control}} engaged on {{Host}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "a66509bf-da72-4198-9f39-67f51f8f9f64",
+    "file": "GH010_classifier_injection.yaml",
+    "properties": {
+      "displayName": "gatehouse - Model-based classifier flagged prompt injection, or failed closed",
+      "description": "This fires on two kinds of classifier.verdict event (ADR-0007):\n- a classifier in alert or enforce mode scored a tool result or tool definition as\n  prompt injection;\n- an enforce-mode classifier gave no answer within its budget, so gatehouse withheld\n  the content (fail closed).\n\nShadow-mode verdicts are excluded: shadow is for measuring a model before trusting\nit. A hit often means an injection that no regex rule matched (a paraphrase or a\ntranslation). Unavailability means detections are being withheld and users are\nbeing blocked until the model is back.",
+      "severity": "Medium",
+      "enabled": true,
+      "query": "GatehouseEvents_CL\n| where EventType == \"classifier.verdict\" and tostring(Details.Mode) != \"shadow\"\n| where RuleId == \"prompt-injection\" or Action == \"fail_closed\"\n| extend Mode = tostring(Details.Mode), Kind = tostring(Details.Kind),\n         Score = todouble(Details.Score)\n| summarize FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated),\n            Hits = countif(RuleId == \"prompt-injection\"),\n            Unavailable = countif(RuleId == \"classifier-unavailable\"),\n            MaxScore = max(Score), Modes = make_set(Mode, 3), Kind = take_any(Kind)\n    by Host, AgentSessionId, ServerName, ToolName, Classifier = DetectorId",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "InitialAccess",
+        "Execution"
+      ],
+      "techniques": [
+        "T1190"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "AgentSessionId": "AgentSessionId",
+        "Classifier": "Classifier",
+        "Hits": "Hits",
+        "Unavailable": "Unavailable"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "{{Classifier}} on {{ServerName}}/{{ToolName}}: {{Hits}} injection verdict(s), {{Unavailable}} unavailable"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
+  },
+  {
+    "id": "cc7b33b6-48d8-4660-91a4-5fcb7d0575ea",
+    "file": "GH011_bearer_token_failures.yaml",
+    "properties": {
+      "displayName": "gatehouse - Burst of refused bearer tokens at an MCP endpoint",
+      "description": "Ten or more requests from one client address were refused by `gatehouse serve\n--oidc-issuer` within five minutes (ADR-0008). The tokens were missing, forged,\nexpired, for another audience, or lacking a required role. One expired token is\nroutine. A burst is token spraying, a stolen token being replayed after expiry, or\na client configured against the wrong tenant. Behind a reverse proxy, ClientAddress\nis the proxy's address.",
+      "severity": "Medium",
+      "enabled": true,
+      "query": "let threshold = 10;\nGatehouseEvents_CL\n| where EventType == \"auth.denied\"\n| extend ClientAddress = tostring(Details.ClientAddress), Error = tostring(Details.Error)\n| summarize Failures = count(), Errors = make_set(Error, 5), Reasons = make_set(Reason, 10),\n            FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)\n    by Host, ServerName, ClientAddress, Window = bin(TimeGenerated, 5m)\n| where Failures >= threshold",
+      "queryFrequency": "PT15M",
+      "queryPeriod": "PT15M",
+      "triggerOperator": "GreaterThan",
+      "triggerThreshold": 0,
+      "suppressionDuration": "PT1H",
+      "suppressionEnabled": false,
+      "tactics": [
+        "CredentialAccess",
+        "InitialAccess"
+      ],
+      "techniques": [
+        "T1110",
+        "T1550"
+      ],
+      "incidentConfiguration": {
+        "createIncident": true,
+        "groupingConfiguration": {
+          "enabled": true,
+          "reopenClosedIncident": false,
+          "lookbackDuration": "PT5H",
+          "matchingMethod": "AllEntities",
+          "groupByEntities": [],
+          "groupByAlertDetails": [],
+          "groupByCustomDetails": []
+        }
+      },
+      "entityMappings": [
+        {
+          "entityType": "Host",
+          "fieldMappings": [
+            {
+              "identifier": "HostName",
+              "columnName": "Host"
+            }
+          ]
+        },
+        {
+          "entityType": "IP",
+          "fieldMappings": [
+            {
+              "identifier": "Address",
+              "columnName": "ClientAddress"
+            }
+          ]
+        }
+      ],
+      "customDetails": {
+        "ClientAddress": "ClientAddress",
+        "Failures": "Failures"
+      },
+      "alertDetailsOverride": {
+        "alertDisplayNameFormat": "{{Failures}} refused bearer tokens from {{ClientAddress}} at {{ServerName}}"
+      },
+      "eventGroupingSettings": {
+        "aggregationKind": "AlertPerResult"
+      }
+    }
   }
 ]

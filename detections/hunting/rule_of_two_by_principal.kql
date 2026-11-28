@@ -1,0 +1,27 @@
+// Hunting: Rule-of-Two trifecta completions per principal.
+// Every flow.rule_of_two event is a call that would have let an agent send out data
+// after reading untrusted input and private data. GH007 alerts on the unapproved ones;
+// this query shows all of them, including the ones a user approved, per principal. A
+// principal who approves nearly every prompt is being trained to click yes (approval
+// fatigue). Give them a scoped grant, or tighten their policy. The principal is the
+// OIDC caller in HTTP mode (Details.Principal on tool.call, ADR-0008), otherwise the
+// host and MCP client.
+let lookback = 30d;
+let anchor = toscalar(GatehouseEvents_CL | summarize max(TimeGenerated));
+let calls = GatehouseEvents_CL
+    | where TimeGenerated > anchor - lookback and EventType == "tool.call"
+    | project ProxySessionId, RequestId, CallPrincipal = tostring(Details.Principal);
+GatehouseEvents_CL
+| where TimeGenerated > anchor - lookback and EventType == "flow.rule_of_two"
+| join kind=leftouter calls on ProxySessionId, RequestId
+| extend Principal = iff(isempty(CallPrincipal), strcat(Host, "/", ClientName), CallPrincipal)
+| summarize Completions = count(),
+            Approved = countif(Action == "approved"),
+            Blocked = countif(Action in ("blocked", "denied")),
+            AllowedUnasked = countif(Action in ("allowed", "logged")),
+            Sessions = dcount(AgentSessionId),
+            Tools = make_set(strcat(ServerName, "/", ToolName), 10),
+            LastSeen = max(TimeGenerated)
+    by Principal
+| extend ApprovalRate = round(1.0 * Approved / Completions, 2)
+| order by Completions desc
