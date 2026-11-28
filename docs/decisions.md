@@ -894,3 +894,39 @@ action.** `findings.rules` maps `detector_id/rule_id` globs to a severity.
 - **This fixes the two held-out v1 false positives without `high: log` everywhere**
   (NEXT.md). That fix is policy configuration, so it isn't evidence of better
   detection, and the evaluation policies don't use it.
+
+**D-051 (2026-11-28) Competitors in evaluation v2: Pipelock strict and
+mcp-context-protector added, with invocations taken from their source.** These facts
+were checked against each project's source at the pinned version, not against READMEs
+alone.
+- **Both new gateways start the server with a cleaned environment.**
+  - Pipelock passes only the variables named with `--env`.
+  - mcp-context-protector passes only HOME, PATH and a few others.
+  - So the harness also writes the scenario spec and log path under the scenario's
+    `$HOME`, and `attacks/mockserver.py` falls back to them. Without this, every
+    scenario would error, and the scores would be meaningless.
+- **Pipelock v3.8.0** (`pipelock mcp proxy --config strict.yaml --env ... -- <server>`):
+  - the signed release binary, verified with cosign and `checksums.txt`;
+  - the config from `pipelock generate config --preset strict`;
+  - blocks come back as JSON-RPC errors, and its stderr finding lines count as
+    detections (`attacks/targets.py`). Chain detections that only warn are left out.
+- **mcp-context-protector** at `05e56c1` (archived):
+  - **It runs without a guardrail provider.** LlamaFirewall needs the gated Prompt Guard
+    2 model and a Hugging Face token, so this is its pinning-only configuration, and the
+    tables say so.
+  - **Approval.** It refuses every configuration until a person approves it. Before
+    each scenario the harness answers its own `--review-server` prompt with "yes" for
+    the first phase, which is trust on first use, like gatehouse's `tofu`.
+  - **Result envelope.** Its results come wrapped as `{"status": "completed", ...}`.
+    `ContextProtector.unwrap_results` removes only that envelope before benign
+    results are compared.
+- **What is counted.** Things a tool does by design are counted as what they are:
+  - Pipelock's per-process pinning baseline can't see a rug pull across restarts.
+  - mcp-context-protector rebuilds tool schemas and drops `structuredContent` and
+    server instructions.
+  - Under the suite's definition, a change to benign traffic is a false positive. The
+    fairness notes in `docs/evaluation.md` list these cases so a reader can discount
+    them.
+- **gateward's audit log.** Its SQLite rows add no scorable signal: blocks are already
+  counted from the client side, and its only `warn` rows are framing errors. The
+  NEXT.md item is closed with this finding.

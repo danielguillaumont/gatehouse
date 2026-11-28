@@ -406,7 +406,7 @@ def run_scenario(
             rp.policy.write_text(_layers.apply(text, layers), encoding="utf-8")
         else:
             shutil.copyfile(EVAL_POLICY, rp.policy)
-        log = tmp / "server-frames.jsonl"
+        log = home / "attack-log.jsonl"  # also the mock server's $HOME fallback (D-051)
         env = {
             "GATEHOUSE_HOME": str(state),
             "HOME": str(home),
@@ -422,7 +422,11 @@ def run_scenario(
             spec_path = tmp / f"spec-{index}.json"
             spec = {"name": sc.id.split(".")[0], **phase.server}
             spec_path.write_text(json.dumps(spec), encoding="utf-8")
+            # for targets that clean the server's environment (mockserver.py fallback)
+            shutil.copyfile(spec_path, home / "attack-spec.json")
             argv = target.argv("srv", server_command(), rp)
+            if index == 0:
+                target.prepare(rp, {**env, "ATTACK_SPEC": str(spec_path)})
             user = SimulatedUser(sc, obs)
             client = StdioClient(
                 argv,
@@ -459,6 +463,7 @@ def run_scenario(
             )
         if target.result_marker is not None:
             obs.markers_stripped = strip_result_marker(obs.calls, target.result_marker)
+        target.unwrap_results(obs.calls)
         if keep_dir is not None:
             shutil.copytree(tmp, keep_dir / sc.id, dirs_exist_ok=True)
     finally:

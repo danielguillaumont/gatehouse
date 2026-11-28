@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, cast
 
 SUPPORTED = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
@@ -35,9 +36,14 @@ META_VERSION = "io.modelcontextprotocol/protocolVersion"
 
 
 def main() -> int:
-    with open(os.environ["ATTACK_SPEC"], encoding="utf-8") as fh:
+    # Some gateways start the server with a cleaned environment (Pipelock passes only
+    # what --env names; mcp-context-protector passes HOME, PATH and a few more). The
+    # harness also writes the spec and log paths under $HOME for those (D-051).
+    home = Path(os.environ.get("HOME") or os.environ.get("USERPROFILE") or ".")
+    spec_path = os.environ.get("ATTACK_SPEC") or str(home / "attack-spec.json")
+    with open(spec_path, encoding="utf-8") as fh:
         spec: dict[str, Any] = json.load(fh)
-    log_path = os.environ.get("ATTACK_LOG")
+    log_path = os.environ.get("ATTACK_LOG") or str(home / "attack-log.jsonl")
     log = open(log_path, "a", encoding="utf-8") if log_path else None
     tools: list[dict[str, Any]] = spec.get("tools", [])
     results: dict[str, Any] = spec.get("results", {})
