@@ -55,6 +55,7 @@ class Result:
     owasp: list[str] = field(default_factory=list[str])
     atlas: list[str] = field(default_factory=list[str])
     duration_s: float = 0.0
+    approvals: int = 0  # approval prompts gatehouse showed (benign flow tasks)
 
 
 def judge(sc: Scenario, obs: Observation) -> Result:
@@ -116,6 +117,8 @@ def metrics(results: list[Result]) -> dict[str, Any]:
         "fp_rate": _ratio(fps, len(benign)),
         "benign_alerts": alerts,
         "alert_rate": _ratio(alerts, len(benign)),
+        "approvals": sum(r.approvals for r in benign),
+        "approvals_per_benign": _ratio(sum(r.approvals for r in benign), len(benign)),
     }
 
 

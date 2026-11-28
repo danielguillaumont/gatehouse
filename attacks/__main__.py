@@ -30,6 +30,7 @@ from attacks.harness import (
     load_scenarios,
     run_scenario,
 )
+from attacks.layers import LAYERS
 from attacks.report import Result, build_report, judge, render_markdown, write_report
 from attacks.targets import TARGETS
 
@@ -53,8 +54,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     for sc in load_scenarios(args.scenarios, only=args.only or ()):
         if not sc.applies_to(target.name):
             continue
-        obs = run_scenario(sc, target)
+        obs = run_scenario(sc, target, layers=args.layers)
         res = judge(sc, obs)
+        res.approvals = approvals_asked(obs)
         results.append(res)
         evidence = out / "evidence" / _safe(sc.id)
         evidence.mkdir(exist_ok=True)
@@ -71,6 +73,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         )
         _err(f"{res.outcome:15} {sc.id}  {', '.join(res.detections)}")
     report = build_report(target.name, results)
+    report["meta"]["layers"] = args.layers
+    scen: Path = args.scenarios.resolve()
+    root = SCENARIO_DIR.parent.parent
+    report["meta"]["scenarios"] = (
+        scen.relative_to(root).as_posix() if scen.is_relative_to(root) else scen.name
+    )
     write_report(out, report)
     if args.summary:
         _err(render_markdown(report))
@@ -199,6 +207,11 @@ def main(argv: list[str] | None = None) -> int:
         help="scenario directory (held-out v2: attacks/heldout2/scenarios)",
     )
     r.add_argument("--summary", action="store_true", help="also print report.md to stderr")
+    r.add_argument(
+        "--layers",
+        choices=sorted(LAYERS),
+        help="ablation row: merge this layer combination into the policy (gatehouse only)",
+    )
     c = sub.add_parser("canary-check")
     c.add_argument("dir", type=Path)
     c.add_argument("--scenarios", type=Path, default=SCENARIO_DIR)

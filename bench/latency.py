@@ -23,6 +23,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from attacks.layers import LAYERS
+from attacks.layers import apply as apply_layers
 from attacks.report import _git_commit  # pyright: ignore[reportPrivateUsage]
 from attacks.targets import TARGETS, RunPaths, server_command
 from gatehouse import __version__
@@ -65,8 +67,22 @@ def _percentile(values: list[float], p: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
 
 
+def policy_text(policy_name: str, layers: str | None = None) -> str:
+    """The bench policy, with an ablation layer overlay (attacks/layers.py) merged in.
+    A layer with flow control starts from the flow policy, so the tool is labelled."""
+    if layers is None:
+        return POLICIES[policy_name]
+    flow = LAYERS[layers]["flow"]["mode"] != "off"
+    return apply_layers(POLICIES["flow" if flow else policy_name], layers)
+
+
 def measure(
-    target: str, size: int, iterations: int, warmup: int = 5, policy_name: str = "allow"
+    target: str,
+    size: int,
+    iterations: int,
+    warmup: int = 5,
+    policy_name: str = "allow",
+    layers: str | None = None,
 ) -> dict[str, float]:
     tmp = Path(tempfile.mkdtemp(prefix="gh-bench-"))
     spec = {
@@ -82,7 +98,7 @@ def measure(
     }
     (tmp / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
     policy = tmp / "policy.yaml"
-    policy.write_text(POLICIES[policy_name], encoding="utf-8")
+    policy.write_text(policy_text(policy_name, layers), encoding="utf-8")
     rp = RunPaths(policy=policy, pins=tmp / "pins.json", events_dir=tmp / "ev")
     argv = TARGETS[target].argv("bench", server_command(), rp)
     env = {"ATTACK_SPEC": str(tmp / "spec.json"), "GATEHOUSE_HOME": str(tmp / "state")}
@@ -123,7 +139,8 @@ def render(report: dict[str, Any]) -> str:
         "",
         f"gatehouse {m['gatehouse_version']} @ `{m['git_commit']}` · Python {m['python']} · "
         f"{m['platform']} · {m['generated_at']} · {m['iterations']} calls per size · "
-        f"policy `{m.get('policy', 'allow')}`",
+        f"policy `{m.get('policy', 'allow')}`"
+        + (f" · layers `{m['layers']}`" if m.get("layers") else ""),
         "",
         "Round trip of one `tools/call` (argument and result both of the given size), in ms.",
         "",
@@ -146,13 +163,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sizes", type=int, nargs="*", default=[1024, 102400, 1048576])
     p.add_argument("--out", type=Path, default=Path("reports/bench"))
     p.add_argument("--policy", choices=sorted(POLICIES), default="allow")
+    p.add_argument("--layers", choices=sorted(LAYERS), help="ablation row (attacks/layers.py)")
     args = p.parse_args(argv)
     results: list[dict[str, Any]] = []
     for size in args.sizes:
         iters = args.iterations if size < (1 << 20) else max(20, args.iterations // 4)
         row: dict[str, Any] = {"size": size}
         for target in ("direct", "gatehouse"):
-            row[target] = measure(target, size, iters, policy_name=args.policy)
+            row[target] = measure(target, size, iters, policy_name=args.policy, layers=args.layers)
             sys.stderr.write(f"{target:10} {_fmt_size(size):>8}  {row[target]}\n")
         results.append(row)
     report = {
@@ -164,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "iterations": args.iterations,
             "policy": args.policy,
+            "layers": args.layers,
         },
         "results": results,
     }

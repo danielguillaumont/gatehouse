@@ -1,0 +1,173 @@
+name: evaluation
+
+# Evaluation v2 (M6, D-048): every table in docs/evaluation.md "Evaluation v2" comes from
+# one run of this workflow. Every job uses the same commit and the same runner image.
+# - ablation: gatehouse under each layer combination (attacks/layers.py) x each set
+# - baseline: no proxy, so a broken scenario shows up
+# - compare: other gateways, installed on the throwaway runner only (D-021)
+# - latency: the benchmark under each layer combination, one runner, one after the other
+# - collate: builds evaluation.md from all of the above
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PY: "3.12"
+
+jobs:
+  ablation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        layers: [observe, pinning, detectors, "v0.1", structural, full]
+        set: [suite, heldout2, mcptox, egress]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked --all-extras
+      - name: Scenario directory
+        id: dir
+        run: |
+          case "${{ matrix.set }}" in
+            suite) echo "path=attacks/scenarios" >> "$GITHUB_OUTPUT" ;;
+            heldout2) uv run python -m attacks.heldout2.mutate --check
+                      echo "path=attacks/heldout2/scenarios" >> "$GITHUB_OUTPUT" ;;
+            *) uv run python -m attacks.external prepare --out .cache/external
+               echo "path=.cache/external/${{ matrix.set }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Run
+        run: |
+          out="reports/gatehouse__${{ matrix.layers }}__${{ matrix.set }}"
+          uv run python -m attacks run --target gatehouse --layers "${{ matrix.layers }}" \
+            --scenarios "${{ steps.dir.outputs.path }}" --out "$out" 2> run.log || true
+          tail -n 5 run.log
+          uv run python -m attacks canary-check "$out" --scenarios "${{ steps.dir.outputs.path }}"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: gatehouse__${{ matrix.layers }}__${{ matrix.set }}
+          path: reports/
+
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        set: [suite, heldout2, mcptox, egress]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked --all-extras
+      - name: Scenario directory
+        id: dir
+        run: |
+          case "${{ matrix.set }}" in
+            suite) echo "path=attacks/scenarios" >> "$GITHUB_OUTPUT" ;;
+            heldout2) echo "path=attacks/heldout2/scenarios" >> "$GITHUB_OUTPUT" ;;
+            *) uv run python -m attacks.external prepare --out .cache/external
+               echo "path=.cache/external/${{ matrix.set }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Run (fails if a scenario is broken)
+        run: |
+          uv run python -m attacks run --target direct \
+            --scenarios "${{ steps.dir.outputs.path }}" --out "reports/direct__-__${{ matrix.set }}"
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: direct__-__${{ matrix.set }}
+          path: reports/
+
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [gateward, mcp-watchdog]
+        set: [suite, heldout2, mcptox, egress]
+        include:
+          - target: gateward
+            package: gateward==0.3.0
+          - target: mcp-watchdog
+            package: mcp-watchdog==0.1.9
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked
+      - name: Install ${{ matrix.package }} in an isolated venv
+        run: |
+          uv venv "$RUNNER_TEMP/competitor" --python "$PY"
+          uv pip install --python "$RUNNER_TEMP/competitor/bin/python" "${{ matrix.package }}"
+          uv pip freeze --python "$RUNNER_TEMP/competitor/bin/python" > competitor-freeze.txt
+          echo "$RUNNER_TEMP/competitor/bin" >> "$GITHUB_PATH"
+      - name: Scenario directory
+        id: dir
+        run: |
+          case "${{ matrix.set }}" in
+            suite) echo "path=attacks/scenarios" >> "$GITHUB_OUTPUT" ;;
+            heldout2) echo "path=attacks/heldout2/scenarios" >> "$GITHUB_OUTPUT" ;;
+            *) uv run python -m attacks.external prepare --out .cache/external
+               echo "path=.cache/external/${{ matrix.set }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Run
+        run: |
+          command -v "${{ matrix.target }}"
+          out="reports/${{ matrix.target }}__-__${{ matrix.set }}"
+          uv run python -m attacks run --target "${{ matrix.target }}" \
+            --scenarios "${{ steps.dir.outputs.path }}" --out "$out" 2> run.log || true
+          tail -n 5 run.log
+          cp competitor-freeze.txt "$out/"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.target }}__-__${{ matrix.set }}
+          path: reports/
+
+  latency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked --all-extras
+      - name: Benchmark each layer combination (one runner, one after the other)
+        run: |
+          for l in observe pinning detectors v0.1 structural full; do
+            uv run python -m bench.latency --iterations 100 --sizes 1024 102400 --layers "$l" --out "reports/bench-$l"
+          done
+      - uses: actions/upload-artifact@v5
+        with:
+          name: latency
+          path: reports/
+
+  collate:
+    needs: [ablation, baseline, compare, latency]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ env.PY }}
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v5
+        with:
+          path: reports
+          merge-multiple: true
+      - run: uv run python -m attacks.evaluate collate reports --out reports/evaluation
+      - run: cat reports/evaluation/evaluation.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: evaluation
+          path: reports/

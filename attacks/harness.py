@@ -13,12 +13,13 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
 import yaml
 
+from attacks import layers as _layers
 from attacks.targets import EVAL_POLICY, FLOW_POLICY, RunPaths, Target, server_command
 from gatehouse.client import ClientError, StdioClient
 from gatehouse.jsonutil import as_obj
@@ -373,7 +374,20 @@ def run_scenario(
     *,
     keep_dir: Path | None = None,
     flow_mode: str = "approve",
+    layers: str | None = None,
 ) -> Observation:
+    """Run one scenario. ``layers`` names an ablation row (attacks/layers.py) whose
+    overlay is merged into the policy; ``None`` uses the policy as written.
+
+    In an ablation run the client always offers elicitation, and the simulated user
+    approves gatehouse's prompts in benign scenarios (and declines them in attacks), so a
+    prompt on a benign task is counted as a prompt, not as a false positive (D-048)."""
+    if layers is not None:
+        sc = replace(
+            sc,
+            user_approves=sc.user_approves or sc.benign,
+            client_capabilities=sc.client_capabilities or {"elicitation": {}},
+        )
     obs = Observation(sc.id, target.name)
     started = time.monotonic()
     tmp = Path(tempfile.mkdtemp(prefix="gh-attack-"))
@@ -386,7 +400,10 @@ def run_scenario(
             if flow_mode not in FLOW_MODES:
                 raise ScenarioError(f"flow mode must be one of {FLOW_MODES}")
             text = FLOW_POLICY.read_text(encoding="utf-8").replace("FLOW_MODE", flow_mode)
-            rp.policy.write_text(text, encoding="utf-8")
+            rp.policy.write_text(_layers.apply(text, layers), encoding="utf-8")
+        elif layers is not None:
+            text = EVAL_POLICY.read_text(encoding="utf-8")
+            rp.policy.write_text(_layers.apply(text, layers), encoding="utf-8")
         else:
             shutil.copyfile(EVAL_POLICY, rp.policy)
         log = tmp / "server-frames.jsonl"

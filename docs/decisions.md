@@ -851,3 +851,29 @@ never committed.**
   gatehouse than the corpora's own verdicts: a `warn` doesn't count.
 - **Alternative:** vendoring a subset. Rejected, because of the third-party rights in
   the authentic definitions.
+
+**D-048 (2026-11-28) Ablation and comparison: one workflow run, named layer overlays, a
+user who approves benign prompts.** The M6 acceptance is "one command per table, every
+number links to a workflow run".
+- **Layers are overlays, not separate policies** (`attacks/layers.py`). Each row merges
+  `pinning`, `findings` and `flow.mode` into the policy the scenario would use anyway,
+  so the rows differ only in the layers.
+  - The rows are `observe`, `pinning`, `detectors`, `v0.1` (detectors + pinning),
+    `structural` (pinning + flow control, with detectors only logging) and `full`.
+  - `structural` is the row that answers "what if every content rule is evaded".
+- **Prompts are counted, not scored as false positives.** In ablation runs the scripted
+  client offers elicitation, and the simulated user approves gatehouse's prompts in
+  benign scenarios and declines them in attacks (as in D-045).
+  - So a benign task that needs a prompt costs a prompt, and the table reports prompts
+    per benign scenario next to the FP rate.
+  - Without this, every flow-control row would look like a false-positive machine.
+    With it, the prompt rate is the honest cost to read.
+- **One workflow** (`.github/workflows/evaluation.yml`): ablation (layers × sets),
+  baseline (direct × sets), compare (other gateways × sets) and latency (bench per
+  layer, one runner) all run on one commit. Then `python -m attacks.evaluate collate`
+  builds the tables, and the run URL goes in the header.
+- **Bypass scenarios** (milestone `bypass`) are excluded from "attacks to prevent" in
+  these tables. They're documented misses, kept to show the suite can fail.
+- **Alternatives:** a policy file per row was rejected, because the files drift. A
+  local run was rejected because of the user's constraint and runner-to-runner noise:
+  every row should come from the same run.
