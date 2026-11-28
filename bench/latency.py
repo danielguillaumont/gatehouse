@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from attacks.layers import LAYERS
+from attacks.layers import LAYERS, NEEDS_OLLAMA
 from attacks.layers import apply as apply_layers
 from attacks.report import _git_commit  # pyright: ignore[reportPrivateUsage]
 from attacks.targets import TARGETS, RunPaths, server_command
@@ -104,6 +104,10 @@ def measure(
     env = {"ATTACK_SPEC": str(tmp / "spec.json"), "GATEHOUSE_HOME": str(tmp / "state")}
     argument = _text(size)
     samples: list[float] = []
+    # A judge layer may withhold the bench's word-salad result. The round trip still
+    # includes the verdict, so it is measured and the withheld calls are counted.
+    tolerate_blocks = layers in NEEDS_OLLAMA
+    blocked = 0
     with StdioClient(argv, env=env, timeout=60) as client:
         client.initialize(client_name="gatehouse-bench")
         client.list_tools()
@@ -111,16 +115,19 @@ def measure(
             start = time.perf_counter()
             resp = client.call_tool("echo", {"text": argument})
             elapsed = (time.perf_counter() - start) * 1000.0
-            if "result" not in resp or resp["result"].get("isError"):
+            failed = "result" not in resp or bool(resp["result"].get("isError"))
+            if failed and not tolerate_blocks:
                 raise RuntimeError(f"{target}: call failed: {resp}")
             if i >= warmup:
                 samples.append(elapsed)
+                blocked += failed
     return {
         "p50": round(_percentile(samples, 0.50), 3),
         "p95": round(_percentile(samples, 0.95), 3),
         "p99": round(_percentile(samples, 0.99), 3),
         "mean": round(statistics.fmean(samples), 3),
         "n": len(samples),
+        "blocked": blocked,
     }
 
 

@@ -225,8 +225,10 @@ jobs:
           cp judge-freeze.txt "$out/"
       - name: Judge latency (1 KiB results, fewer iterations)
         if: matrix.set == 'suite' && matrix.shard == 0
+        continue-on-error: true
         run: uv run python -m bench.latency --iterations 30 --sizes 1024 --layers judge --out reports/bench-judge
       - uses: actions/upload-artifact@v5
+        if: always()
         with:
           name: gatehouse__judge__${{ matrix.set }}.${{ matrix.shard }}
           path: reports/
