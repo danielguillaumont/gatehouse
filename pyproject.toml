@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 # not import the MCP SDK at runtime (see docs/decisions.md).
 dependencies = [
     "anyio>=4.4,<5",
+    "cedarpy>=4.12.2,<5",
     "psutil>=6,<8",
     "pydantic>=2.7,<3",
     "pyyaml>=6.0.1,<7",
@@ -42,6 +43,7 @@ dev = [
     "types-psutil",
     "azure-identity>=1.27.0",
     "azure-monitor-ingestion>=1.1.0",
+    "hypothesis==6.170.15",
 ]
 
 [build-system]
