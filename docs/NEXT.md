@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-27** (v0.2.0-alpha released; M5 in progress: steps 1–3 done).
+Last updated **2026-11-28** (v0.2.0 released: M5 done; M6 next).
 
 ## Status
 
@@ -66,7 +66,7 @@ Done:
   - `docs/research/mcp-2026-intermediary-security.md`;
   - README.
 
-### M5 → v0.2.0 (in progress)
+### M5 → v0.2.0 (done)
 
 Done:
 1. **Policy engine v2** (`6cc11ff`, `825ed0a`, `b8e20c7`; D-040, D-041):
@@ -91,19 +91,46 @@ Done:
    - emits `flow.provenance_match`;
    - does not catch paraphrases.
 
-Remaining:
-4. Quarantine + `gatehouse review`; scoped grants; approval budget; circuit breaker;
-   kill switch.
-5. Approval through MRTR where the client supports it (ADR-0004), legacy elicitation
-   otherwise, else block.
-6. `flow.*` scenarios across two or three mock servers, including injections no rule
-   detects.
+4. **Response controls** (`b1010a6`; ADR-0006, D-044):
+   - kill switch (the `<state dir>/KILL` file, `gatehouse kill`, SIGUSR1);
+   - circuit breaker (`gatehouse unlock`);
+   - quarantine with `gatehouse review` (release is replayed on the identical call);
+   - scoped grants (`gatehouse grant`), which answer policy and Rule-of-Two approvals
+     only;
+   - approval budget;
+   - a self-protection rule against agents running these commands.
+5. **Approval channels:** MRTR, then legacy elicitation, then block. This was already
+   built in M4 and is documented in `docs/policy.md`.
+6. **`flow.*` scenarios** (`21eeb08`; D-045): eight chains and six benign tasks, each
+   server behind its own gatehouse process; `python -m attacks flow` runs them in CI.
 
-Acceptance:
-- 0 `flow.*` exfiltration chains complete in `approve` / `enforce`;
-- README reports approvals per benign task;
-- no v0.1 regressions;
-- `policy prove` fails CI on a deliberately broken policy.
+Acceptance, all from GitHub Actions run
+[46101039038](https://github.com/danielguillaumont/gatehouse/actions/runs/46101039038)
+(commit `e5d7b7c`):
+- **0/8 chains complete in approve and in enforce.** Monitor lets 6/8 through.
+- **The README reports approvals per benign task:** 0.50 in approve mode.
+- **No v0.1 regressions:** mvp 19/19, m2 34/35 plus 1 detected, held-out 6/18, m4 9/9.
+- **`policy prove` fails CI on a broken policy:** the `policy-prove` job expects exit 1
+  on `tests/policy/fixtures/policy-flow-broken.yaml`.
+- **Latency, 1 KiB p95:** +1.98 ms with Cedar, +2.67 ms with flow control.
+
+### M6 → v0.3.0 (next)
+
+Evaluation first, then detectors. Heavy runs go in GitHub Actions, not locally.
+
+1. Held-out v2: a mutation engine, frozen and hashed before any detector work.
+2. External corpora: MCPTox and agent-egress-bench (check their licenses first).
+3. A benign corpus of 200+ scenarios.
+4. An ablation table.
+5. Competitors re-run: gateward, mcp-watchdog, Pipelock strict, mcp-context-protector.
+6. Optional: a live agent driven by Ollama.
+7. Detectors:
+   - an async detector interface;
+   - Prompt Guard 2 (ONNX);
+   - Prompt Shields;
+   - an Ollama judge in shadow mode;
+   - per-rule severity overrides;
+   - the rule fixes listed below.
 
 ## v0.1 milestone summary
 

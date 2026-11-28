@@ -177,6 +177,80 @@ Claude Code sends `server/discover` and `initialize` back to back, and gatehouse
 the legacy era on the forwarded `initialize`, so the modern server's tools never loaded
 (fixed in `ea8473e`, ADR-0002).
 
+## Session flow control (M5)
+
+M5 asks whether an exfiltration chain can be stopped when nothing detects the injection.
+All numbers in this section come from one GitHub Actions run:
+[46101039038](https://github.com/danielguillaumont/gatehouse/actions/runs/46101039038),
+job `attack-suite`, commit `e5d7b7c`, gatehouse 0.2.0a0, Python 3.12.16, Ubuntu
+(Linux 7.0.0-1020-azure), 2026-11-28. The artifact `attack-reports` holds the raw
+reports.
+
+**Command:** `uv run python -m attacks flow --out reports/flow`. It runs every
+`attacks/scenarios/flow.yaml` scenario under each `flow.mode`, with
+`attacks/policy-flow.yaml`.
+
+- **Real processes.** Each server in a scenario (notes, web, mail, issues, files) runs
+  behind its own `gatehouse run` process. They share one state directory and one agent
+  session, as they do under a real agent.
+- **The agent is scripted to follow every injection**, which is the worst case.
+- **The injections are polite requests that no content rule flags.** No
+  `response.injection` finding fired on any of them.
+- **The simulated user** declines gatehouse's approval prompts in the attack chains and
+  accepts them in the benign tasks, so approvals can be counted (D-045). A user who
+  approves everything gets the `monitor` row.
+
+| flow.mode | Chains completed | Benign tasks passed | Approval prompts (benign) | Approvals per benign task |
+|---|---|---|---|---|
+| monitor | 6 / 8 | 6 / 6 | 0 | 0.00 |
+| **approve** | **0 / 8** | **6 / 6** | **3** | **0.50** |
+| enforce | 0 / 8 | 3 / 6 | 0 | 0.00 |
+
+- **approve** (the recommended mode) stops every chain. The benign tasks need 0 or 1
+  prompt each:
+
+  | Benign task | Properties | Prompts |
+  |---|---|---|
+  | `notes-to-colleague` | private data + egress | 0 |
+  | `web-research` | untrusted input + egress | 0 |
+  | `share-report` | private data + egress | 0 |
+  | `research-then-email` | all three | 1 |
+  | `inbox-reply` | all three | 1 |
+  | `issue-to-note` | all three, via a write | 1 |
+
+- **Every prevented chain was stopped by structure.** The enforcing detection is
+  `tool.call/flow` in every case.
+  - Provenance also matched the two chains that copy the memo verbatim or in base64
+    (`flow.provenance/private-data-copied`).
+  - The paraphrased chain has no copy to match, and it's stopped anyway.
+- **monitor isn't purely passive.** It stops 2 of the 8 chains: a verbatim or encoded
+  copy of private data sent after untrusted input escalates to approval through
+  `flow.provenance` (default `require_approval`).
+- **enforce** blocks the three benign tasks that need all three properties, as it is
+  meant to.
+- **Limits:**
+  - Eight chains and six benign tasks is a small set, written by the author. The 200+
+    benign corpus and external sets are M6.
+  - The labels come from a policy written for these servers. A tool the policy forgot
+    to label isn't counted (`docs/known-bypasses.md`).
+
+**The rest of the suite in the same run** (`python -m attacks run --target gatehouse`):
+95 attacks and 29 benign scenarios.
+
+| Milestone | Attacks | Prevented | Detected only | Missed |
+|---|---|---|---|---|
+| mvp | 19 | 19 | 0 | 0 |
+| m2 | 35 | 34 | 1 | 0 |
+| m3 (held-out) | 18 | 6 | 0 | 12 |
+| m4 | 9 | 9 | 0 | 0 |
+| m5 (flow chains in approve mode, plus self-protection) | 11 | 11 | 0 | 0 |
+| bypass (documented) | 3 | 0 | 0 | 3 |
+
+- There are no v0.1 regressions.
+- Benign false positives: 2 of 29. Both are the documented held-out ones
+  (`benign.heldout.xml-config`, `benign.heldout.note-to-model`).
+- Canary check: 0 leaks.
+
 ## Latency
 
 Command: `uv run python -m bench.latency --out reports/bench` (default iterations), at
@@ -207,6 +281,35 @@ detectors *and* the result detectors run on that many bytes. Times are in ms.
     rule, moving the boundary checks into validators and skipping digit-free text halved
     it.
 - **Shared CI runners are noisy.** CI publishes its numbers, but they are not gated.
+
+**Cedar and flow control (M5).** Same GitHub Actions run as above
+([46101039038](https://github.com/danielguillaumont/gatehouse/actions/runs/46101039038),
+commit `e5d7b7c`, Ubuntu, Python 3.12.16, 100 calls per size). The three policies ran
+one after the other on one runner:
+
+- `allow`: allow-all, decided by Cedar and checked against the native reference (the
+  default engine);
+- `native`: the reference engine alone;
+- `flow`: `flow.mode: approve` with the tool labelled `private_data`, so every call
+  reads the shared flow store and every result is fingerprinted.
+
+Command: `uv run python -m bench.latency --iterations 100 --policy allow|native|flow`.
+
+| Payload | overhead p50: native | allow (Cedar) | flow | overhead p95: native | allow (Cedar) | flow |
+|---|---|---|---|---|---|---|
+| 1 KiB | +1.22 | +1.46 | +2.48 | +1.28 | +1.98 | +2.67 |
+| 100 KiB | +14.99 | +15.10 | +37.11 | +16.43 | +15.57 | +38.42 |
+| 1 MiB | +124.36 | +126.19 | +178.67 | +124.83 | +128.28 | +180.79 |
+
+- **Cedar costs about 0.2 ms per call.** That's allow minus native at 1 KiB p50. At
+  larger sizes it's lost in the detector cost. The 1 KiB p95 target (5 ms) holds in all
+  three configurations on this runner.
+- **Flow control costs about 1 ms per call**, mostly the flow-store reads and writes,
+  plus fingerprinting `private_data` results.
+  - Fingerprinting is capped at 32 KiB of text (D-043). That's why it adds about 22 ms
+    at 100 KiB and about 52 ms at 1 MiB, not more.
+  - Only results from tools labelled `private_data` are fingerprinted, and only
+    arguments to `egress` tools are checked.
 
 ## Competitor comparison (M3)
 

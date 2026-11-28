@@ -4,8 +4,10 @@
 [![secrets](https://github.com/danielguillaumont/gatehouse/actions/workflows/secrets.yml/badge.svg)](https://github.com/danielguillaumont/gatehouse/actions/workflows/secrets.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**A security proxy for AI agents' MCP tool calls that blocks rug pulls and credential
-leaks, and gives the SOC redacted events and tested Microsoft Sentinel detections.**
+**A security proxy for AI agents' MCP tool calls. It keeps prompt injection from
+turning into exfiltration even when the injection isn't detected, blocks rug pulls and
+credential leaks, and gives the SOC redacted events and tested Microsoft Sentinel
+detections.**
 
 ![gatehouse blocking a rug-pulled MCP server: the tool definition changes, gatehouse hides it, blocks the call and logs a pin_mismatch detection](docs/assets/demo.gif)
 
@@ -18,6 +20,21 @@ agent, blocks the call and logs the detection. Source: [`demo/`](demo/README.md)
 - **Enforces** a YAML policy and pins tool definitions, so a server can't change a tool
   after you approved it (rug pull). Risky calls can require a human yes through the MCP
   client's own prompt. Everything fails closed.
+  - Rules can check arguments: recipient domains, URL hosts, path roots, numeric limits.
+  - The policy compiles to Cedar, and `gatehouse policy prove` checks invariants such as
+    "no delete tool is ever allowed without approval" in CI, including with Cedar's
+    symbolic compiler.
+- **Contains** prompt injection it can't detect. Session flow control applies the Rule
+  of Two across every server the agent uses: once a session has read untrusted input and
+  private data, an egress or state-changing call needs a human (or is blocked).
+  - This works whatever the injection says, in any order.
+  - Provenance fingerprints show when private text, or its base64, hex or URL-encoded
+    form, is being sent out.
+- **Responds:**
+  - quarantine with `gatehouse review`;
+  - a circuit breaker that locks a session after repeated high findings;
+  - a kill switch (file, signal or CLI);
+  - scoped grants and an approval budget against approval fatigue.
 - **Inspects** tool listings, arguments and results for tool poisoning, prompt injection,
   secrets, credential paths, dangerous commands and personal data, using bounded,
   ReDoS-safe rules.
@@ -28,11 +45,33 @@ agent, blocks the call and logs the detection. Source: [`demo/`](demo/README.md)
 
 ## How it's measured
 
-A target-agnostic attack suite: 75 attacks and 16 benign scenarios, each a YAML file
-with a success condition checked at the mock server. The same suite runs through gatehouse
-and the two other stdio MCP gateways, on the same CI runner, from the same commit.
-A false positive is any change to benign traffic: a hidden tool, a blocked call or an
-edited result.
+A target-agnostic attack suite: 95 attacks and 29 benign scenarios, each a YAML file
+with a success condition checked at the mock server. A false positive is any change to
+benign traffic: a hidden tool, a blocked call or an edited result.
+
+**Cross-server exfiltration chains (v0.2.0).** These come from GitHub Actions run
+[46101039038](https://github.com/danielguillaumont/gatehouse/actions/runs/46101039038)
+at commit `e5d7b7c` (`python -m attacks flow`).
+- There are eight chains across notes, web, mail, issue and file servers, each server
+  behind its own gatehouse. The injections are polite requests that no content rule
+  flags.
+- The scripted agent always follows the injection.
+- The simulated user declines gatehouse's prompts during attacks and accepts them
+  during benign tasks.
+
+| flow.mode | Chains completed | Benign tasks passed | Approvals per benign task |
+|---|---|---|---|
+| monitor | 6 / 8 | 6 / 6 | 0.00 |
+| **approve** | **0 / 8** | **6 / 6** | **0.50** (3 tasks need 1 prompt, 3 need none) |
+| enforce | 0 / 8 | 3 / 6 | 0.00 |
+
+Every chain was stopped by flow control itself (the Rule of Two), not by spotting the
+injection; one of them sends a paraphrase that no copy detector could match.
+[Details and limits](docs/evaluation.md#session-flow-control-m5).
+
+**Against other gateways (v0.1.0).** The same suite ran through gatehouse and the two
+other stdio MCP gateways, on the same CI runner, from the same commit. It had 75 attacks
+and 16 benign scenarios then:
 
 | [Run 45507937200](docs/evaluation.md#competitor-comparison-m3), 2026-11-24 | gatehouse 0.1.0 | gateward 0.3.0 | mcp-watchdog 0.1.9 |
 |---|---|---|---|
@@ -54,7 +93,13 @@ reproducing scenario in [`docs/known-bypasses.md`](docs/known-bypasses.md). Scor
 details and caveats, including that I wrote the suite, are in
 [`docs/evaluation.md`](docs/evaluation.md).
 
-Added latency: +4.35 ms p95 for a 1 KiB tool call (`uv run python -m bench.latency`).
+Added latency for a 1 KiB tool call, p95 (`uv run python -m bench.latency`, CI run
+46101039038, Ubuntu):
+- +1.98 ms with the Cedar engine (Cedar's share is about 0.2 ms);
+- +2.67 ms with flow control on.
+
+The v0.1 figure was +4.35 ms on a Windows laptop. Details are in
+[`docs/evaluation.md`](docs/evaluation.md#latency).
 
 ## Architecture
 
@@ -65,20 +110,29 @@ flowchart LR
     subgraph gh["gatehouse run --name github -- &lt;server cmd&gt;"]
         direction TB
         framing["strict JSON-RPC framing"] --> router["router"]
-        router --> policy["policy + pinning"]
+        router --> policy["policy (Cedar) + pinning"]
         router --> detectors["detectors<br/>(pure functions)"]
         router --> emitter["emitter + redaction"]
     end
     client <-- "stdio" --> framing
     router <-- "stdio" --> server
     router -. "approval prompt<br/>(MCP elicitation)" .-> client
+    router <--> state[("flow + control stores<br/>shared by every gatehouse")]
     emitter --> jsonl[("JSONL file")]
     emitter --> sentinel["Microsoft Sentinel<br/>GatehouseEvents_CL"]
     sentinel --> rules["analytics rules<br/>GH001–GH006"]
 ```
 
-One gatehouse process per server. They share an `AgentSessionId`, so Sentinel can
-correlate across servers: for example, an injection in a web page fetched on one server
+One gatehouse process per server. They share an `AgentSessionId` and two local SQLite
+stores:
+- the **flow store** holds which capability labels the session has collected, plus
+  provenance fingerprints;
+- the **control store** holds the kill switch state, locks, quarantine and grants.
+
+So a decision on the mail server knows what the agent read through the web server
+([ADR-0005](docs/adr/0005-session-flow-control.md),
+[ADR-0006](docs/adr/0006-response-controls.md)). Sentinel can correlate across servers
+too: for example, an injection in a web page fetched on one server
 followed by a message sent on another (GH006). The proxy works at the message level:
 unknown methods and fields are forwarded byte for byte. More in
 [`docs/architecture.md`](docs/architecture.md).
@@ -130,13 +184,24 @@ A policy is a short YAML file. An invalid one blocks everything.
 version: 1
 default_action: block        # required: allowlist style
 pinning: strict              # strict | tofu | "off"
+flow: {mode: approve}         # Rule of Two across servers: monitor | approve | enforce
 servers:
   github:
     tools:
       "list_*": allow
       "merge_*": {action: require_approval, reason: "Merges need a human"}
       delete_repo: block     # an explicit block always wins
+  mail:
+    tools:
+      send_email:
+        action: allow
+        when: {to: {email_domains: [mycorp.com]}}   # anyone else needs approval
+        otherwise: require_approval
+    labels: {send_email: [egress], "read_*": [untrusted_input, private_data]}
 ```
+
+See [`docs/policy.md`](docs/policy.md) for conditions, labels, flow control, response
+controls and `policy prove`.
 
 | Command | What it does |
 |---|---|
@@ -145,6 +210,12 @@ servers:
 | `gatehouse pin --name N [--tool T] -- CMD...` | Approve the server's current tool definitions |
 | `gatehouse diff --name N -- CMD...` | Show what changed since approval (exit 1 on drift) |
 | `gatehouse validate-policy P` / `policy-hash P` | Check a policy, or print its hash for `--expect-policy-sha256` |
+| `gatehouse policy compile P [--out DIR]` / `policy prove P --invariants I` | Compile a policy to Cedar; prove invariants (exit 1 if one fails) |
+| `gatehouse status` | Kill switch, locked sessions, quarantine and grants |
+| `gatehouse kill [--reason R]` / `kill --off` | Engage or release the kill switch for every gatehouse on the machine |
+| `gatehouse review [show\|release\|discard ID]` | Review results gatehouse withheld; a released one is delivered on the agent's next identical call |
+| `gatehouse grant add S T --when C --for 30m` / `grant list` / `grant revoke ID` | Scoped approval, e.g. `send_email` to `@mycorp.com` for 30 minutes |
+| `gatehouse unlock [--session ID]` | Unlock a session the circuit breaker locked |
 | `gatehouse table-schema` | Print the `GatehouseEvents_CL` column schema |
 
 ## Detections
