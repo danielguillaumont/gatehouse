@@ -146,11 +146,21 @@ commit `1e28862`): `full` prevented 112/330 of held-out v2 and completed 0/8 cha
 1.0% FP.
 
 Remaining:
-- the evaluation run on the detector commit (run
-  [46110435400](https://github.com/danielguillaumont/gatehouse/actions/runs/46110435400)),
-  then the "Evaluation v2" write-up in `docs/evaluation.md` and the README headline;
-- optional: a live agent driven by Ollama (about 20 tasks, labelled "indicative");
-- the M6 explainer, then tag v0.3.0.
+- **The release evaluation** is run
+  [46112090830](https://github.com/danielguillaumont/gatehouse/actions/runs/46112090830)
+  at commit `37da760` (version 0.3.0). Every v0.3.0 number comes from it. When it
+  finishes: the "Evaluation v2" write-up in `docs/evaluation.md`, the README headline,
+  the explainer, then tag v0.3.0.
+- **Preview** from run 46110807546 (`f00612b`), not for reporting: the judge layer
+  prevented 206/330 of held-out v2 with 31/119 benign FP. Verdict p50 was 687 ms on CPU.
+- The bench can't time a judge layer, because the circuit breaker locks the session
+  once the judge withholds results. Verdict latency comes from `classifier.verdict`
+  events instead (`attacks.evaluate verdict-latency`).
+- Skipped: the optional live Ollama agent.
+
+**Overnight plan (2026-11-28):** finish M6 and release v0.3.0; then M7 without Azure
+(KQL, hunting pack, workbook, OIDC in HTTP mode, the playbook control loop with a fake
+queue, Bicep, a deploy checklist) and release v0.4.0; then M8 and release v0.5.0.
 
 Not possible without the owner (noted for M7):
 - **Prompt Guard 2** is gated on Hugging Face, so the ONNX path is tested with fakes
