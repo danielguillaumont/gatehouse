@@ -210,6 +210,70 @@ class ControlSettings(_Strict):
     approval_budget: ApprovalBudget = Field(default_factory=ApprovalBudget)
 
 
+class ClassifierKind(StrEnum):
+    PROMPT_GUARD = "prompt_guard"  # local ONNX model (pip install gatehouse[classify])
+    PROMPT_SHIELDS = "prompt_shields"  # Azure AI Content Safety, over HTTPS
+    OLLAMA = "ollama"  # a local model asked to judge, over loopback HTTP
+
+
+class ClassifierMode(StrEnum):
+    """What a classifier verdict does (ADR-0007, D-050)."""
+
+    ENFORCE = "enforce"  # held for the verdict; a hit is a finding; no verdict = fail closed
+    ALERT = "alert"  # runs alongside; a hit is a detection event, never a block
+    SHADOW = "shadow"  # runs alongside; verdicts are recorded for evaluation only
+
+
+class ClassifierSurface(StrEnum):
+    RESULTS = "results"  # tools/call results
+    DEFINITIONS = "definitions"  # tool descriptions and schemas from tools/list
+
+
+_LOOPBACK = ("127.0.0.1", "localhost", "[::1]")
+
+
+class ClassifierSettings(_Strict):
+    """A model-based detector (ADR-0007). See docs/policy.md#classifiers."""
+
+    id: Annotated[StrictStr, Field(pattern=r"^[a-z0-9_]{1,32}$")]
+    kind: ClassifierKind
+    mode: ClassifierMode = ClassifierMode.SHADOW
+    applies_to: tuple[ClassifierSurface, ...] = (
+        ClassifierSurface.RESULTS,
+        ClassifierSurface.DEFINITIONS,
+    )
+    # A score at or above this is a hit (Prompt Shields answers yes/no: 1.0 or 0.0).
+    threshold: float = Field(default=0.9, gt=0.0, le=1.0)
+    severity: RuleSeverity = RuleSeverity.HIGH
+    # Latency budget per verdict. In enforce mode an answer later than this is no answer.
+    budget_ms: int = Field(default=500, ge=1, le=60_000)
+    model_dir: StrictStr | None = None  # prompt_guard: model.onnx + tokenizer.json
+    endpoint: StrictStr | None = None  # prompt_shields: https://...; ollama: loopback URL
+    key_env: Annotated[StrictStr, Field(pattern=r"^[A-Z_][A-Z0-9_]{0,63}$")] = (
+        "GATEHOUSE_CONTENT_SAFETY_KEY"
+    )
+    model: StrictStr | None = None  # ollama model name
+
+    @model_validator(mode="after")
+    def _kind_fields(self) -> ClassifierSettings:
+        if self.kind is ClassifierKind.PROMPT_GUARD and not self.model_dir:
+            raise ValueError("prompt_guard needs `model_dir`")
+        if self.kind is ClassifierKind.PROMPT_SHIELDS:
+            if not self.endpoint or not self.endpoint.startswith("https://"):
+                raise ValueError("prompt_shields needs an https:// `endpoint`")
+        if self.kind is ClassifierKind.OLLAMA:
+            if not self.model:
+                raise ValueError("ollama needs `model`")
+            url = self.endpoint or "http://127.0.0.1:11434"
+            host = url.split("://", 1)[-1].split("/", 1)[0].rsplit(":", 1)[0]
+            if not url.startswith("http://") or host not in _LOOPBACK:
+                # tool results are private: a judge may only be a local process
+                raise ValueError("ollama `endpoint` must be a loopback http:// URL")
+        if not self.applies_to:
+            raise ValueError("`applies_to` must name at least one surface")
+        return self
+
+
 class ServerBlock(_Strict):
     tools: dict[Pattern, RuleSpec] = Field(default_factory=dict[str, ToolRule])
     pinning: PinningMode | None = None
@@ -270,6 +334,7 @@ class Policy(_Strict):
     protocol: ProtocolSettings = Field(default_factory=ProtocolSettings)
     flow: FlowSettings = Field(default_factory=FlowSettings)
     controls: ControlSettings = Field(default_factory=ControlSettings)
+    classifiers: Annotated[tuple[ClassifierSettings, ...], Field(max_length=8)] = ()
     # Which engine decides (D-040). Both implement the same semantics; native is the
     # reference the Cedar compiler is tested against.
     engine: Literal["cedar", "native"] = "cedar"
@@ -290,6 +355,9 @@ class Policy(_Strict):
 
     @model_validator(mode="after")
     def _compile(self) -> Policy:
+        ids = [c.id for c in self.classifiers]
+        if len(ids) != len(set(ids)):
+            raise ValueError("classifier ids must be unique")
         rules: list[CompiledRule] = []
         pinning: list[tuple[str, Specificity, PinningMode]] = []
         labels: list[tuple[str, str, frozenset[Label]]] = []

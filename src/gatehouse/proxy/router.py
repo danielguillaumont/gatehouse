@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -30,11 +30,20 @@ import anyio
 from anyio.abc import TaskGroup
 
 from gatehouse.canonical import canonical_sha256
+from gatehouse.classify.base import (
+    HIT_RULE,
+    UNAVAILABLE_RULE,
+    Verdict,
+    definition_text,
+    findings_for,
+    is_enforcing,
+)
+from gatehouse.classify.runner import ClassifierRunner
 from gatehouse.events.emitter import Emitter
 from gatehouse.events.fingerprint import Fingerprinter
 from gatehouse.events.schema import Direction, EventAction, EventType, Severity
 from gatehouse.inspect.base import Finding
-from gatehouse.inspect.pinning import PinStatus, check_pin
+from gatehouse.inspect.pinning import PinStatus, check_pin, tool_digest
 from gatehouse.inspect.pipeline import (
     ScanConfig,
     scan_arguments,
@@ -59,6 +68,8 @@ from gatehouse.policy.labels import tool_labels
 from gatehouse.policy.loader import PolicyLoad
 from gatehouse.policy.models import (
     Action,
+    ClassifierMode,
+    ClassifierSurface,
     ControlSettings,
     FindingAction,
     FlowMode,
@@ -181,6 +192,8 @@ class RouterConfig:
     # Response controls (ADR-0006, D-044): kill switch, circuit breaker, approval budget,
     # quarantine and scoped grants, shared by every gatehouse on the machine.
     control: ControlStore = field(default_factory=lambda: ControlStore(None))
+    # Model-based detectors from the policy (ADR-0007, D-050).
+    classifiers: tuple[ClassifierRunner, ...] = ()
 
 
 @dataclass
@@ -255,6 +268,8 @@ class Router:
         # tools/list) run here so the client reader loop stays free. Without a task group
         # (unit tests) the call is awaited inline.
         self.task_group: TaskGroup | None = None
+        # (classifier id, tool digest) -> verdict: listings repeat, mostly unchanged
+        self._definition_verdicts: dict[tuple[str, str], Verdict] = {}
         self._kill_seen = False  # last kill-switch state this process reported
         self._local_locks: dict[str, str] = {}  # sessions locked while the store failed
 
@@ -939,6 +954,126 @@ class Router:
         policy = self.cfg.policy.policy
         assert policy is not None
         return flow.tool_labels | policy.labels_for(self.cfg.server_name, tool)
+
+    # ------------------------------------------------------------------ classifiers
+
+    def _emit_verdict(
+        self, runner: ClassifierRunner, verdict: Verdict, location: str, **ctx: Any
+    ) -> None:
+        s = runner.settings
+        hit = verdict.hit(s.threshold)
+        detector = f"classifier.{s.id}"
+        rule = HIT_RULE if hit else (UNAVAILABLE_RULE if verdict.score is None else "no-hit")
+        severity = Severity.INFORMATIONAL
+        action = EventAction.NONE
+        if is_enforcing(s) and verdict.score is None:
+            severity, action = Severity.HIGH, EventAction.FAIL_CLOSED
+        elif hit and s.mode is not ClassifierMode.SHADOW:
+            severity = Severity(s.severity.value)
+            action = EventAction.LOGGED if s.mode is ClassifierMode.ALERT else EventAction.NONE
+        score = "none" if verdict.score is None else f"{verdict.score:.3f}"
+        self.emit.emit(
+            EventType.CLASSIFIER_VERDICT,
+            severity=severity,
+            action=action,
+            detector_id=detector,
+            rule_id=rule,
+            match_summary=f"{s.kind.value} score {score} (threshold {s.threshold})",
+            location=location,
+            latency_ms=verdict.latency_ms,
+            details={
+                "Mode": s.mode.value,
+                "Kind": s.kind.value,
+                "Score": verdict.score,
+                "Threshold": s.threshold,
+                "Chunks": verdict.chunks,
+                "Truncated": verdict.truncated,
+                "Error": verdict.error,
+            },
+            **ctx,
+        )
+        if hit and s.mode is ClassifierMode.ALERT:
+            # an alert-mode hit is a detection the SOC sees, but never a block
+            for f in findings_for(s, verdict, location):
+                self.emit.emit_finding(f, action=EventAction.LOGGED, **ctx)
+
+    async def _background(self, fn: Callable[..., Coroutine[Any, Any, None]], *args: Any) -> None:
+        if self.task_group is not None:
+            self.task_group.start_soon(fn, *args)
+        else:  # no task group (unit tests): run inline
+            await fn(*args)
+
+    async def _classify_background(
+        self, runner: ClassifierRunner, value: Any, location: str, ctx: dict[str, Any]
+    ) -> None:
+        verdict = await runner.classify(value, location)
+        self._emit_verdict(runner, verdict, location, **ctx)
+
+    async def _classify(
+        self, surface: ClassifierSurface, value: Any, location: str, **ctx: Any
+    ) -> list[Finding]:
+        """Enforce-mode findings for ``value``. Alert and shadow classifiers run alongside
+        (in the task group, so they never delay the traffic) and only emit events."""
+        runners = [r for r in self.cfg.classifiers if r.applies_to(surface)]
+        if not runners:
+            return []
+        for r in runners:
+            if not is_enforcing(r.settings):
+                await self._background(self._classify_background, r, value, location, ctx)
+        enforce = [r for r in runners if is_enforcing(r.settings)]
+        verdicts: dict[str, Verdict] = {}
+
+        async def one(r: ClassifierRunner) -> None:
+            verdicts[r.settings.id] = await r.classify(value, location)
+
+        async with anyio.create_task_group() as tg:
+            for r in enforce:
+                tg.start_soon(one, r)
+        findings: list[Finding] = []
+        for r in enforce:
+            v = verdicts[r.settings.id]
+            self._emit_verdict(r, v, location, **ctx)
+            findings += findings_for(r.settings, v, location)
+        return findings
+
+    async def _classify_definitions(self, defs: list[dict[str, Any]]) -> dict[str, list[Finding]]:
+        """Enforce-mode findings per tool name, from cached or fresh verdicts."""
+        runners = [r for r in self.cfg.classifiers if r.applies_to(ClassifierSurface.DEFINITIONS)]
+        out: dict[str, list[Finding]] = {}
+        if not runners:
+            return out
+        todo: list[tuple[ClassifierRunner, str, str, dict[str, Any]]] = []
+        for d in defs:
+            name = as_str(d.get("name"))
+            if name is None:
+                continue
+            digest = tool_digest(d)
+            for r in runners:
+                cached = self._definition_verdicts.get((r.settings.id, digest))
+                if cached is None:
+                    todo.append((r, name, digest, d))
+                elif is_enforcing(r.settings):
+                    out.setdefault(name, []).extend(
+                        findings_for(r.settings, cached, f"tools[{name}]")
+                    )
+
+        async def one(r: ClassifierRunner, name: str, digest: str, d: dict[str, Any]) -> None:
+            location = f"tools[{name}]"
+            v = await r.classify(definition_text(d), location)
+            if v.score is not None:  # never cache "no answer"
+                self._definition_verdicts[(r.settings.id, digest)] = v
+            self._emit_verdict(r, v, location, direction=_S2C, method=TOOLS_LIST, tool_name=name)
+            if is_enforcing(r.settings):
+                out.setdefault(name, []).extend(findings_for(r.settings, v, location))
+
+        for t in todo:
+            if not is_enforcing(t[0].settings):
+                await self._background(one, *t)
+        async with anyio.create_task_group() as tg:
+            for t in todo:
+                if is_enforcing(t[0].settings):
+                    tg.start_soon(one, *t)
+        return out
 
     def _provenance(self, tool: str, arguments: dict[str, Any], flow: _FlowCheck) -> list[Finding]:
         """Does this egress call carry a copy of private data the session read? (D-043)"""
@@ -1949,6 +2084,7 @@ class Router:
         defs = [d for d in (as_obj(t) for t in offered) if d is not None]
         names = [n for n in (as_str(d.get("name")) for d in defs) if n is not None]
         duplicates = {n for n in names if names.count(n) > 1}
+        classified = await self._classify_definitions(defs)
 
         kept: list[dict[str, Any]] = []
         visible: dict[str, ToolInfo] = {}
@@ -2040,6 +2176,7 @@ class Router:
 
             # content detectors on the definition (M2), x-mcp-header checks (2026-07-28)
             findings = scan_tool_definition(tdef, defs, self.cfg.scan)
+            findings += classified.get(name, [])
             header_findings = x_mcp_headers(tdef)[1]
             if not self.cfg.http:
                 # stdio clients MAY ignore x-mcp-header; report, don't filter, on stdio
@@ -2153,6 +2290,14 @@ class Router:
             findings = scan_tool_result(
                 self.cfg.server_name, pending.tool_name or "", result, self.cfg.scan
             )
+            findings += await self._classify(
+                ClassifierSurface.RESULTS,
+                result,
+                "result",
+                direction=_S2C,
+                method=TOOLS_CALL,
+                tool_name=pending.tool_name,
+            )
         worst = self._worst(findings)
         # Approval is not possible after the fact: a flagged result is withheld.
         blocked = worst is not Action.ALLOW
@@ -2240,7 +2385,7 @@ class Router:
 _INJECTION_DETECTORS = frozenset({"response.injection", "text.invisible"})
 PROVENANCE_ID = "flow.provenance"
 # Findings about gatehouse's own state, not the agent's behaviour: no breaker strike.
-_NOT_STRIKES = frozenset({"provenance-unavailable"})
+_NOT_STRIKES = frozenset({"provenance-unavailable", UNAVAILABLE_RULE})
 _SEVERITY_RANK = {
     Severity.INFORMATIONAL: 0,
     Severity.LOW: 1,

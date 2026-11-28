@@ -69,12 +69,13 @@ disagree. `SchemaVersion` is 1.
 | `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients; `granted` also when a scoped grant answers (D-044) | Channel (`mrtr`, `grant`), GrantId |
 | `flow.provenance_match` | an egress call's arguments copy text or a secret from a `private_data` result the session read (D-043); high severity if the session also holds `untrusted_input` | DetectorId `flow.provenance`; RuleId `private-data-copied`, `private-secret-copied` or `provenance-unavailable`; MatchSummary names the source tools; Details.FindingAction |
 | `flow.rule_of_two` | a call completes the Rule-of-Two trifecta (any `flow.mode` but `off`); Action says what happened | FlowMode, SessionLabels, ToolLabels |
+| `classifier.verdict` | one per classifier per result or tool definition (ADR-0007); Severity and Action are only raised for an `alert` hit or an `enforce` failure (`fail_closed`) | DetectorId `classifier.<id>`; RuleId `prompt-injection`, `no-hit` or `classifier-unavailable`; LatencyMs; Details.Mode, Kind, Score, Threshold, Chunks, Truncated, Error |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
 | `response.quarantined` | a withheld result was kept for review (`gatehouse review`) | QuarantineId, Kept (false if over 1 MiB: withheld but not kept) |
 | `response.released` | a reviewed, released result was delivered when the agent repeated the call; the server is not called again | QuarantineId |
 | `control.kill_switch` | this process saw the kill switch engage or release (once per change) | State (`engaged`, `released`), Source (`file`, `signal`) |
 | `control.circuit_breaker` | the agent session was locked after N calls or results with high findings | Strikes, Threshold |
-| `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow or control store that can't be read or written (fails closed) | Component (`flow_store`, `control_store`) |
+| `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow or control store that can't be read or written (fails closed) | Component (`flow_store`, `control_store`, `classifier`) |
 | `gatehouse.fail_open` | telemetry lost (the only fail-open path, ADR-0001) | Component |
 
 ## Guarantees

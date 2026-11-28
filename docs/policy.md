@@ -360,6 +360,74 @@ findings:
 - **Scope:** the content detectors, meaning arguments, tool definitions and tool
   results. Pinning, policy decisions and flow control don't have severities to change.
 
+## Classifiers
+
+Model-based detectors run next to the rule detectors (ADR-0007). They catch paraphrased
+and translated injections that regexes miss, but they cost latency and can fail, so each
+one has a mode:
+
+```yaml
+classifiers:
+  - id: pg2                       # [a-z0-9_], used in DetectorId classifier.pg2
+    kind: prompt_guard            # local ONNX model: pip install 'gatehouse[classify]'
+    model_dir: ~/models/prompt-guard-2-86m
+    mode: shadow                  # shadow (default) | alert | enforce
+    applies_to: [results, definitions]
+    threshold: 0.9                # score >= threshold is a hit
+    severity: high                # severity of a hit (enforce and alert)
+    budget_ms: 500                # enforce: no answer in time = blocked
+  - id: judge
+    kind: ollama                  # a local model asked to judge
+    model: llama3.2:3b
+    endpoint: http://127.0.0.1:11434   # loopback only
+  - id: shields
+    kind: prompt_shields          # Azure AI Content Safety
+    endpoint: https://<resource>.cognitiveservices.azure.com
+    key_env: GATEHOUSE_CONTENT_SAFETY_KEY   # the key comes from the environment
+```
+
+- **`shadow`:** the classifier runs alongside the traffic without delaying it. Each
+  verdict is a `classifier.verdict` event and nothing else. Use it to measure a model
+  on your own traffic before trusting it.
+- **`alert`:** also runs alongside. A hit is also a `detection` event (Action `logged`),
+  so Sentinel rules fire. Nothing is blocked.
+- **`enforce`:** the result or listing waits for the verdict, up to `budget_ms`.
+  - A hit is a finding at `severity`, and the [findings table](#findings) decides: a
+    result is withheld, or a tool is filtered.
+  - No answer in time, an error or a missing model is a HIGH `classifier-unavailable`
+    finding, so gatehouse fails closed. These findings don't count toward the circuit
+    breaker.
+
+**What a model sees.** It reads the strings of a result, or a tool's name, description
+and schemas. MCP framing fields (`type`, `mimeType`, `uri`) are left out. Text is cut
+into chunks of 2,000 characters, at most 5. The verdict is the highest chunk score,
+and `Details.Truncated` says when text was left over. Definition verdicts are cached
+per tool digest. No text is logged, only scores.
+
+**Backends:**
+
+- **`prompt_guard`** needs a local ONNX export of Meta's
+  `meta-llama/Llama-Prompt-Guard-2-86M` in `model_dir` (`model.onnx`,
+  `tokenizer.json`, `config.json`).
+  - The model is gated on Hugging Face under the Llama license. Accept the license
+    there, then export it yourself, for example
+    `optimum-cli export onnx --model meta-llama/Llama-Prompt-Guard-2-86M --task text-classification ~/models/prompt-guard-2-86m`.
+  - gatehouse never downloads or ships the model.
+  - The attack class is read from `id2label` in `config.json`, and it defaults to
+    index 1.
+- **`ollama`** sends the text to a model on loopback (`/api/generate`, temperature 0,
+  JSON answer). Any other host is rejected when the policy loads, because tool results
+  are private. A yes/no judge scores 1.0 or 0.0, so leave `threshold` at its default.
+- **`prompt_shields`** calls Azure AI Content Safety `text:shieldPrompt` (api-version
+  `2024-09-01`) and sends the chunks as `documents`.
+  - The text leaves the machine, so only use it where that is allowed.
+  - Watch the resource's rate limit: F0 allows 5 requests per second.
+  - A yes/no answer scores 1.0 or 0.0.
+
+A classifier that can't start (missing key, `gatehouse[classify]` not installed, no
+model) is announced at startup as `gatehouse.internal_error` (Component `classifier`).
+In `enforce` mode, every verdict it should give then fails closed.
+
 ## Approval through elicitation
 
 When a call resolves to `require_approval` (a policy rule, an incomparable tie, or a

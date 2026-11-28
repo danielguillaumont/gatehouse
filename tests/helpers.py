@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from gatehouse.classify.base import Backend
+from gatehouse.classify.runner import ClassifierRunner
 from gatehouse.events.emitter import Emitter, EventContext
 from gatehouse.events.fingerprint import Fingerprinter
 from gatehouse.events.sinks import MemorySink
@@ -189,6 +191,7 @@ def make_harness(
     flow: FlowStore | None = None,
     agent_session_id: str = "agent",
     control: ControlStore | None = None,
+    classifier_backends: dict[str, Backend] | None = None,
 ) -> RouterHarness:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(textwrap.dedent(policy_yaml), encoding="utf-8")
@@ -218,6 +221,10 @@ def make_harness(
         flow=flow if flow is not None else FlowStore(None),
         agent_session_id=agent_session_id,
         control=control if control is not None else ControlStore(None),
+        classifiers=tuple(
+            ClassifierRunner(c, (classifier_backends or {}).get(c.id), "no test backend")
+            for c in (load.policy.classifiers if load.policy else ())
+        ),
     )
     harness: RouterHarness
 

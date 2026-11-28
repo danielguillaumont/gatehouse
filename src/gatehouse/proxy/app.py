@@ -14,6 +14,8 @@ from typing import Any
 import anyio
 
 from gatehouse import paths
+from gatehouse.classify.base import is_enforcing
+from gatehouse.classify.runner import ClassifierRunner
 from gatehouse.events.emitter import Emitter, EventContext
 from gatehouse.events.fingerprint import Fingerprinter, load_or_create_key
 from gatehouse.events.schema import EventAction, EventType, Severity
@@ -117,6 +119,25 @@ def build_emitter(opts: RunOptions, context: EventContext) -> Emitter:
     return emitter
 
 
+def _classifiers(load: PolicyLoad, emitter: Emitter) -> tuple[ClassifierRunner, ...]:
+    """One runner per policy classifier. One that can't start (missing key, extra or
+    model) is announced here; in enforce mode every verdict then fails closed."""
+    if load.policy is None:
+        return ()
+    runners = tuple(ClassifierRunner.from_settings(c) for c in load.policy.classifiers)
+    for r in runners:
+        if r.build_error is not None:
+            emitter.emit(
+                EventType.INTERNAL_ERROR,
+                severity=Severity.HIGH if is_enforcing(r.settings) else Severity.MEDIUM,
+                action=EventAction.FAIL_CLOSED if is_enforcing(r.settings) else EventAction.NONE,
+                detector_id=f"classifier.{r.settings.id}",
+                reason=f"classifier {r.settings.id} unavailable: {r.build_error}",
+                details={"Component": "classifier", "Mode": r.settings.mode.value},
+            )
+    return runners
+
+
 def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
     load = _check_expected_hash(load_policy(opts.policy_path), opts.expect_policy_sha256)
     context = EventContext(
@@ -149,6 +170,7 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         emitter.emit(EventType.POLICY_LOADED, details={"PolicyPath": load.path})
 
     flow = _flow_store(load, emitter)
+    classifiers = _classifiers(load, emitter)
     control = _control_store(emitter)
     _install_kill_signal(control)
 
@@ -172,6 +194,7 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         flow=flow,
         agent_session_id=context.agent_session_id,
         control=control,
+        classifiers=classifiers,
     )
     return config, emitter
 

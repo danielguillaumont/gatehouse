@@ -930,3 +930,41 @@ alone.
 - **gateward's audit log.** Its SQLite rows add no scorable signal: blocks are already
   counted from the client side, and its only `warn` rows are framing errors. The
   NEXT.md item is closed with this finding.
+
+**D-050 (2026-11-28) Classifiers: a mode per classifier; enforce fails closed within a
+budget; shadow is the default (ADR-0007).**
+- **Decision.**
+  - `policy.classifiers` lists up to 8 model-based detectors (`prompt_guard`,
+    `ollama`, `prompt_shields`), each with a `mode`.
+  - `enforce` waits up to `budget_ms`. No answer becomes a HIGH
+    `classifier-unavailable` finding.
+  - `alert` and `shadow` run in the task group and never delay or change traffic.
+  - The default is `shadow`, so adding a model never changes behaviour until it has
+    been measured.
+- **Why.** The roadmap sets the failure behaviour: timeouts fail closed for enforce
+  and open for shadow. A model whose precision on your traffic is unknown shouldn't
+  block by default. Shadow verdicts cost no latency, and they are what the evaluation
+  scores.
+- **Not `gatehouse.fail_open`.** A shadow or alert timeout bypasses no control, since no
+  decision depends on it. So it is recorded in its `classifier.verdict` event and not
+  as `gatehouse.fail_open`. ADR-0001's single fail-open path is unchanged.
+- **Not a strike.** `classifier-unavailable` is excluded from circuit-breaker strikes,
+  like `provenance-unavailable`. Otherwise a model outage would lock every session.
+- **Data boundaries.**
+  - Ollama must be loopback `http://`, checked when the policy loads.
+  - Prompt Shields must be `https://`, with the key from an environment variable.
+  - The text sent is strings only, without MCP framing fields: at most 5 chunks of
+    2,000 characters, which fits Prompt Shields' 5 documents and 10K characters and
+    is about Prompt Guard's 512 tokens per chunk.
+- **Testing without the real models.**
+  - Prompt Guard 2 is gated (Llama license, Hugging Face token), so CI tests it with an
+    injected fake session and tokenizer.
+  - The Prompt Shields request shape follows Microsoft's quickstart, verified
+    2026-11-28 (`text:shieldPrompt`, api-version 2024-09-01, `userPrompt` and
+    `documents`, `documentsAnalysis[].attackDetected`). It is tested with a stubbed
+    HTTP layer until M7 provides an Azure resource.
+  - No detection numbers are claimed for either model.
+- **Alternatives.**
+  - Classifiers inside the pure pipeline: rejected, because inference is I/O.
+  - Fail open in enforce: rejected by ADR-0001.
+  - Enforce as the default: rejected, because of unmeasured false positives.
