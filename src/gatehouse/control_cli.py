@@ -13,6 +13,7 @@ import re
 import sys
 import unicodedata
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -229,6 +230,47 @@ def cmd_grant(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_listen(args: argparse.Namespace) -> int:
+    import os
+
+    from gatehouse.control_queue import AzureQueue, Listener
+    from gatehouse.events.emitter import Emitter, EventContext
+    from gatehouse.events.sentinel import SentinelConfig, SentinelSink, azure_uploader
+    from gatehouse.events.sinks import JsonlFileSink, Sink, StderrSink
+
+    url = os.environ.get(args.queue_url_env)
+    if not url:
+        _err(f"gatehouse listen: set {args.queue_url_env} to the control queue's SAS URL")
+        return 2
+    try:
+        queue = AzureQueue(url)
+    except ValueError as exc:
+        _err(f"gatehouse listen: {exc}")
+        return 2
+    events_dir = args.events_dir or paths.default_events_dir()
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    sinks: list[Sink] = [JsonlFileSink(events_dir / f"events-{stamp}-control-listen.jsonl")]
+    if not args.quiet:
+        sinks.append(StderrSink())
+    sentinel = SentinelConfig.from_env()
+    if sentinel is not None:
+        try:
+            sinks.append(SentinelSink(azure_uploader(sentinel)))
+        except Exception as exc:  # missing extra: the JSONL log still has every signal
+            _err(f"gatehouse listen: Sentinel sink unavailable: {exc}")
+    emitter = Emitter(
+        EventContext(agent_session_id="control-listener", server_name="control"), sinks
+    )
+    _err(f"gatehouse listen: polling {queue.display} (Ctrl+C to stop)")
+    try:
+        Listener(queue, _store(), emitter).run(args.interval, 1 if args.once else None)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        emitter.close()
+    return 0
+
+
 def add_parsers(sub: Any) -> None:
     sub.add_parser("status", help="kill switch, locked sessions, quarantine and grants")
 
@@ -269,6 +311,21 @@ def add_parsers(sub: Any) -> None:
     gr.add_argument("id", nargs="?")
     gr.add_argument("--all", action="store_true")
 
+    ls = sub.add_parser(
+        "listen",
+        help="apply remote control signals (kill, lock, revoke) from an Azure Storage queue",
+    )
+    ls.add_argument(
+        "--queue-url-env",
+        default="GATEHOUSE_CONTROL_QUEUE_URL",
+        metavar="VAR",
+        help="environment variable holding the queue's SAS URL (default %(default)s)",
+    )
+    ls.add_argument("--interval", type=float, default=10.0, help="seconds between empty polls")
+    ls.add_argument("--once", action="store_true", help="poll once and exit (for a scheduler)")
+    ls.add_argument("--events-dir", type=Path, default=None)
+    ls.add_argument("--quiet", action="store_true", help="no events on stderr")
+
 
 def dispatch(args: argparse.Namespace) -> int:
     handlers = {
@@ -277,6 +334,7 @@ def dispatch(args: argparse.Namespace) -> int:
         "unlock": cmd_unlock,
         "review": cmd_review,
         "grant": cmd_grant,
+        "listen": cmd_listen,
     }
     if args.cmd == "review" and args.review_cmd is None:
         args.all = False
@@ -289,4 +347,4 @@ def dispatch(args: argparse.Namespace) -> int:
         return 1
 
 
-COMMANDS = frozenset({"status", "kill", "unlock", "review", "grant"})
+COMMANDS = frozenset({"status", "kill", "unlock", "review", "grant", "listen"})

@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "action": "kill",
+  "reason": "Sentinel incident @{triggerBody()?['object']?['properties']?['incidentNumber']}: @{take(string(triggerBody()?['object']?['properties']?['title']), 150)}",
+  "incident": "@{triggerBody()?['object']?['properties']?['incidentUrl']}",
+  "issued": "@{utcNow()}"
+}

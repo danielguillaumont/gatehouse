@@ -66,6 +66,7 @@ class EventType(StrEnum):
     RESPONSE_RELEASED = "response.released"  # a reviewed result delivered from quarantine
     CONTROL_CIRCUIT_BREAKER = "control.circuit_breaker"
     CONTROL_KILL_SWITCH = "control.kill_switch"
+    CONTROL_SIGNAL = "control.signal"  # a remote signal from the control queue (M7)
     # HTTP authorization (M7, ADR-0008)
     AUTH_DENIED = "auth.denied"
     # model-based detectors (M6, ADR-0007): one verdict per classifier per input

@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "action": "lock_session",
+  "reason": "Sentinel alert: @{take(string(triggerBody()?['AlertDisplayName']), 150)}",
+  "session": "@{first(json(triggerBody()?['ExtendedProperties']?['Custom Details'])?['AgentSessionId'])}",
+  "incident": "@{triggerBody()?['SystemAlertId']}",
+  "issued": "@{utcNow()}"
+}

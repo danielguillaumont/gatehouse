@@ -1066,3 +1066,43 @@ judge layer is measured in CI.**
   - no passthrough;
   - a real-TCP end-to-end run.
 
+**D-055 (2026-11-28) Remote control signals arrive on an Azure Storage queue and can
+only tighten controls.**
+- *Decision.* `gatehouse listen` polls a Storage queue through a SAS URL taken from an
+  environment variable. It applies:
+  - `kill` (the kill-switch file);
+  - `lock_session` (a circuit-breaker lock for one AgentSessionId);
+  - `revoke_grants` (one grant, or `*`).
+
+  The poll uses the stdlib only, and it runs one daemon per machine, since every
+  gatehouse on the machine already shares the control store.
+  - Release, unlock and grant messages are rejected. Loosening a control stays a local
+    human action.
+  - Signals older than `ttl_s` (default 1 hour) or more than 5 minutes in the future
+    are rejected.
+  - Every message, applied or rejected, emits `control.signal` and is deleted.
+  - A store failure leaves the message on the queue, which retries it up to a dequeue
+    count of 5 before dropping it with an event.
+  - A failing poll emits one `gatehouse.internal_error` per outage.
+- *Why a queue.* A Logic App playbook can write to it with its managed identity
+  (`Storage Queue Data Message Sender`). The machine needs no inbound port; it only
+  polls outbound over HTTPS. gatehouse's SAS has only the process permission (read
+  and delete).
+- *Why no message signature.* The Logic Apps expression language has no HMAC
+  function, so signing would need an extra Function app. The queue's RBAC is the trust
+  boundary. Because signals can only tighten, a forged message can deny service (a
+  kill), but it can never widen access.
+- *Alternatives.*
+  - Event Grid or webhook push: needs an inbound endpoint.
+  - Service Bus: costs more, for no gain at this volume.
+  - Polling Sentinel incidents directly: needs workspace read rights on every
+    machine.
+- *Testing.* `attacks/fake_queue.py` is a local fake of the Queue REST API (Put, Get
+  and Delete Messages, a SAS check, visibility timeout, dequeue count). The tests:
+  - render `infra/playbook/*-message.json` (the messages the playbooks put on the
+    queue) with sample values;
+  - put them on the fake queue;
+  - run `gatehouse listen --once` as a real process;
+  - check that a running router blocks the next call with the incident in the
+    reason.
+
