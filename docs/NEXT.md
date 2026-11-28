@@ -1,6 +1,6 @@
 # Status and next steps
 
-Last updated **2026-11-27** (v0.1.0 released; v2 milestone M4 in progress).
+Last updated **2026-11-27** (v0.2.0-alpha released: v2 milestone M4 done; M5 next).
 
 ## Status
 
@@ -17,8 +17,12 @@ MVP, M2, the Sentinel integration and the M3 evaluation are complete.
   - detections (Kusto emulator)
   - infra (Bicep compile)
   - gitleaks (full history)
+  - conformance (official MCP suite, direct vs through `gatehouse serve`; on proxy
+    changes and weekly)
 
-## v2 progress (M4 → v0.2.0-alpha)
+## v2 progress
+
+### M4 → v0.2.0-alpha (done)
 
 Built against MCP 2026-07-28 (spec commit `fdc75bd`, D-035). Claims in the v2 plan were
 checked against primary sources first (`docs/research/landscape-2026-11.md`, D-037,
@@ -40,17 +44,49 @@ Done:
   public-cache rug pull, discover instructions) succeed without a proxy and are all
   prevented by gatehouse. All 6 benign twins pass. The v0.1 scenarios are unchanged.
 
-Next in M4:
-1. Streamable HTTP reverse proxy (`gatehouse serve --upstream`), with:
-   - header/body consistency (-32020);
-   - x-mcp-header inspection;
-   - Origin checks;
-   - no token passthrough.
-   Plus its attack scenarios (header/body mismatch smuggling, x-mcp-header injection).
-2. Conformance tests (official suite if one exists, else the SDK test servers), and a
-   Claude Code 2.1.332 smoke test with a modern and a legacy server.
-3. ADRs, `docs/research/mcp-2026-intermediary-security.md`, README, then tag
-   v0.2.0-alpha.
+- **Streamable HTTP** (`gatehouse serve`, D-039, ADR-0003):
+  - header/body consistency (-32020) and x-mcp-header enforcement;
+  - upstream headers rebuilt from the inspected body, no token passthrough;
+  - gatehouse-issued legacy session ids, Origin/Host checks, loopback by default;
+  - gatehouse resumes closed upstream SSE streams itself.
+- **HTTP scenarios** (`python -m attacks http`): all 6 attacks are prevented and both
+  benign twins pass.
+- **Acceptance** (`docs/evaluation.md#protocol-fidelity-m4`):
+  - the official conformance suite passes through gatehouse on both wires (33/33 at
+    2025-11-25, 40/40 at 2026-07-28), the same as direct;
+  - Claude Code 2.1.332 works through gatehouse with a dual-era stdio server, a
+    legacy-only stdio server and an HTTP server;
+  - the v0.1 suite is unchanged.
+- **Bugs those runs found, all fixed:**
+  - era latching on a pipelined `initialize`;
+  - approval state not bound to the server;
+  - five HTTP divergences (listed in evaluation.md).
+- **Docs:**
+  - ADR-0002 (eras), ADR-0003 (HTTP), ADR-0004 (MRTR approval);
+  - `docs/research/mcp-2026-intermediary-security.md`;
+  - README.
+
+### M5 → v0.2.0 (next)
+
+1. `PolicyEngine` interface with Cedar via `cedarpy` behind it (D-038). YAML compiles to
+   Cedar; the schema comes from pinned tools. Argument conditions: path roots,
+   URL/domain allowlists, recipient domains, numeric limits. `gatehouse policy prove`
+   (Cedar CLI `symcc` in Linux CI).
+2. Shared session store keyed by `AgentSessionId`; capability labels from the policy;
+   Rule-of-Two modes `monitor` / `approve` / `enforce`.
+3. Provenance fingerprints of `private_data` results checked against `egress` arguments.
+4. Quarantine + `gatehouse review`; scoped grants; approval budget; circuit breaker;
+   kill switch.
+5. Approval through MRTR where the client supports it (ADR-0004), legacy elicitation
+   otherwise, else block.
+6. `flow.*` scenarios across two or three mock servers, including injections no rule
+   detects.
+
+Acceptance:
+- 0 `flow.*` exfiltration chains complete in `approve` / `enforce`;
+- README reports approvals per benign task;
+- no v0.1 regressions;
+- `policy prove` fails CI on a deliberately broken policy.
 
 ## v0.1 milestone summary
 

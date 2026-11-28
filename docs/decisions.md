@@ -444,6 +444,19 @@ in front of a Streamable HTTP server. Design:
   0.29.0 was uploaded on 2026-11-26, too recently to adopt. `httpx2` (pydantic/httpx2)
   is the maintained fork the MCP SDK 2.3.0 itself depends on, so the dev lock already
   tests it. The `gatehouse[http]` extra is `httpx2` + `uvicorn`.
+- **Upstream stream resumption is gatehouse's job (added 2026-11-27 after the
+  conformance run).** When a 2025-11-25 upstream closes an SSE stream before answering
+  (polling, SEP-1699), gatehouse resumes it itself with GET + `Last-Event-ID` on the
+  upstream session, at most 5 times. The client gets the inspected answer on its
+  original stream. Upstream event ids, priming events and `retry` hints are not
+  passed downstream, so a client never resumes against gatehouse. That means
+  gatehouse needs no event store and has no unauthenticated GET path into the session.
+  Without an event id, the request fails at once instead of at the request timeout.
+- **A 2026-07-28 header classifies the request.** A request whose
+  `MCP-Protocol-Version` header names 2026-07-28 but whose envelope is missing gets
+  400 / -32602 from gatehouse, as from a 2026-07-28 server. It used to be treated as
+  legacy and sent upstream without a session. -32022 for an enveloped request lists the
+  versions discover advertised through gatehouse.
 Known limits: the event context (client name, protocol version) is shared across
 concurrent requests, so with several clients at once an event can carry another
 request's client name. Server-initiated legacy streams (GET) are not offered.
