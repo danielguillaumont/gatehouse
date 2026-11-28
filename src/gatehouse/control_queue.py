@@ -38,6 +38,7 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
@@ -181,7 +182,9 @@ class AzureQueue:
     """Azure Queue Storage REST API with a SAS URL (``https://<acct>.queue.core.windows.net
     /<queue>?sv=…&sig=…``). http:// is allowed on loopback only (a fake queue in CI)."""
 
-    def __init__(self, sas_url: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self, sas_url: str, timeout: float = 30.0, token: Callable[[], str] | None = None
+    ) -> None:
         parts = urlsplit(sas_url)
         host = parts.hostname or ""
         if not (parts.scheme == "https" or (parts.scheme == "http" and host in LOOPBACK)):
@@ -190,6 +193,7 @@ class AzureQueue:
             raise ValueError("control queue URL has no queue name")
         self._parts = parts
         self.timeout = timeout
+        self.token = token  # Microsoft Entra bearer token instead of a SAS
         self.display = f"{parts.scheme}://{host}{parts.path}"  # without the SAS
 
     def _url(self, suffix: str, extra: str = "") -> str:
@@ -198,7 +202,9 @@ class AzureQueue:
         return urlunsplit((self._parts.scheme, self._parts.netloc, path, query, ""))
 
     def _request(self, method: str, url: str) -> bytes:
-        headers = {"x-ms-version": API_VERSION}
+        headers = {"x-ms-version": API_VERSION}  # >= 2017-11-09, needed for Entra auth
+        if self.token is not None:
+            headers["Authorization"] = f"Bearer {self.token()}"
         req = urllib.request.Request(url, method=method, headers=headers)  # noqa: S310 (scheme checked)
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 (scheme checked)

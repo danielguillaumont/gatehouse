@@ -35,6 +35,18 @@ param retentionInDays int = 90
 
 param namePrefix string = 'gatehouse'
 
+@description('Deploy the control loop: queue, kill/lock playbooks and automation rules (D-055).')
+param deployControlLoop bool = false
+
+@description('Object id of the identity `gatehouse listen` runs as. Empty: assign later.')
+param listenerPrincipalId string = ''
+
+@allowed(['User', 'ServicePrincipal', 'Group'])
+param listenerPrincipalType string = 'User'
+
+@description('Object id of the Azure Security Insights service principal (see docs/sentinel-setup.md).')
+param securityInsightsPrincipalId string = ''
+
 var tableName = 'GatehouseEvents_CL'
 var streamName = 'Custom-${tableName}'
 var columns = loadJsonContent('generated/columns.json')
@@ -134,6 +146,24 @@ resource analyticsRules 'Microsoft.SecurityInsights/alertRules@2024-03-01' = [
   }
 ]
 
+var ruleIds = [
+  for rule in rules: extensionResourceId(workspace.id, 'Microsoft.SecurityInsights/alertRules', rule.id)
+]
+
+module control 'control.bicep' = if (deployControlLoop && deployAnalyticsRules) {
+  name: '${namePrefix}-control'
+  params: {
+    location: location
+    workspaceName: workspaceName
+    namePrefix: namePrefix
+    ruleIds: ruleIds
+    listenerPrincipalId: listenerPrincipalId
+    listenerPrincipalType: listenerPrincipalType
+    securityInsightsPrincipalId: securityInsightsPrincipalId
+  }
+  dependsOn: [analyticsRules]
+}
+
 @description('Pass to gatehouse as --sentinel-endpoint / GATEHOUSE_SENTINEL_ENDPOINT.')
 output ingestionEndpoint string = dce.properties.logsIngestion.endpoint
 
@@ -142,3 +172,6 @@ output dcrImmutableId string = dcr.properties.immutableId
 
 output streamName string = streamName
 output workspaceId string = workspace.id
+
+@description('GATEHOUSE_CONTROL_QUEUE_URL for `gatehouse listen` (empty without the control loop).')
+output controlQueueUrl string = (deployControlLoop && deployAnalyticsRules) ? control!.outputs.controlQueueUrl : ''

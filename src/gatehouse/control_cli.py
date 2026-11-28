@@ -12,6 +12,7 @@ import json
 import re
 import sys
 import unicodedata
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -242,8 +243,22 @@ def cmd_listen(args: argparse.Namespace) -> int:
     if not url:
         _err(f"gatehouse listen: set {args.queue_url_env} to the control queue's SAS URL")
         return 2
+    token: Callable[[], str] | None = None
+    if "sig=" not in url:  # no SAS: authenticate with Microsoft Entra (managed identity, az login)
+        try:
+            from azure.identity import DefaultAzureCredential
+        except ImportError:
+            _err("gatehouse listen: a queue URL without a SAS needs gatehouse[sentinel]")
+            return 2
+        credential = DefaultAzureCredential()
+
+        def entra_token() -> str:
+            return str(credential.get_token("https://storage.azure.com/.default").token)
+
+        token = entra_token
+
     try:
-        queue = AzureQueue(url)
+        queue = AzureQueue(url, token=token)
     except ValueError as exc:
         _err(f"gatehouse listen: {exc}")
         return 2
@@ -319,7 +334,8 @@ def add_parsers(sub: Any) -> None:
         "--queue-url-env",
         default="GATEHOUSE_CONTROL_QUEUE_URL",
         metavar="VAR",
-        help="environment variable holding the queue's SAS URL (default %(default)s)",
+        help="environment variable holding the queue URL, with a SAS (sig=…) or without one "
+        "for Microsoft Entra auth (default %(default)s)",
     )
     ls.add_argument("--interval", type=float, default=10.0, help="seconds between empty polls")
     ls.add_argument("--once", action="store_true", help="poll once and exit (for a scheduler)")

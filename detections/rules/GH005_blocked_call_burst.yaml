@@ -33,10 +33,11 @@ entityMappings:
       - identifier: HostName
         columnName: Host
 customDetails:
+  AgentSessionId: AgentSessionId
   BlockedCalls: BlockedCalls
 alertDetailsOverride:
   alertDisplayNameFormat: "{{BlockedCalls}} blocked MCP tool calls in one agent session"
 eventGroupingSettings:
   aggregationKind: AlertPerResult
-version: 1.0.0
+version: 1.1.0
 kind: Scheduled

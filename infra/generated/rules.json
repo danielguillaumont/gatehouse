@@ -103,6 +103,7 @@
         }
       ],
       "customDetails": {
+        "AgentSessionId": "AgentSessionId",
         "ServerName": "ServerName",
         "ToolName": "ToolName",
         "BlockedCalls": "BlockedCalls"
@@ -162,6 +163,7 @@
         }
       ],
       "customDetails": {
+        "AgentSessionId": "AgentSessionId",
         "ServerName": "ServerName",
         "ToolName": "ToolName",
         "SecretType": "RuleId"
@@ -219,6 +221,7 @@
         }
       ],
       "customDetails": {
+        "AgentSessionId": "AgentSessionId",
         "Signal": "Signal",
         "ServerName": "ServerName"
       },
@@ -276,6 +279,7 @@
         }
       ],
       "customDetails": {
+        "AgentSessionId": "AgentSessionId",
         "BlockedCalls": "BlockedCalls"
       },
       "alertDetailsOverride": {
@@ -333,6 +337,7 @@
         }
       ],
       "customDetails": {
+        "AgentSessionId": "AgentSessionId",
         "SourceServer": "SourceServer",
         "SourceTool": "SourceTool",
         "EgressTools": "EgressTools"
