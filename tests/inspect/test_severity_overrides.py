@@ -56,9 +56,7 @@ def test_pipeline_applies_overrides() -> None:
     result = {"content": [{"type": "text", "text": INJECTION}]}
     plain = scan_tool_result("s", "t", result, ScanConfig())
     assert plain and all(f.severity is Severity.HIGH for f in plain)
-    cfg = ScanConfig(
-        severity_overrides=(("response.injection/*", Severity.MEDIUM),)
-    )
+    cfg = ScanConfig(severity_overrides=(("response.injection/*", Severity.MEDIUM),))
     rerated = scan_tool_result("s", "t", result, cfg)
     assert rerated and all(f.severity is Severity.MEDIUM for f in rerated)
 
