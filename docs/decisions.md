@@ -540,3 +540,55 @@ Alternatives considered:
 - Conditions written in Cedar: no email/URL/path parsing in Cedar.
 - A broker process for the session store: more moving parts than a grow-only table
   needs.
+
+**D-041 (2026-11-27) `gatehouse policy prove`: invariants are policy-set implications,
+proved by SymCC in Linux CI and checked by a bounded enumerator everywhere.**
+- **Invariants** are a separate YAML file (`examples/invariants.yaml`), not part of the
+  runtime policy. Each names a scope (server/tool `*` globs, tool labels, session
+  labels) and `never: allow` (never allowed without a human) or `never:
+  allow_or_approve` (always blocked). Each compiles to a Cedar policy `Q` that permits
+  everything outside the scope, and the check is `P => Q` for the forbidden action(s),
+  with `P` the compiled policy.
+- **SymCC through the CLI.** `cedar symcc … implies --policies1 P --policies2 Q` from
+  cedar-policy-cli 4.15.0, built with `--features analyze`, plus cvc5 1.3.1 (the
+  version the cedar-policy-symcc README pins; the release zip is checked against the
+  digest in its GitHub release metadata).
+  - The CLI exits 0 when a property does **not** hold. It prints `DOES NOT HOLD` and a
+    counterexample (checked in `cedar-policy-cli/src/command/symcc.rs` at v4.15.0), so
+    gatehouse reads the verdict from the output and treats anything else as an error
+    (exit 2), never as a pass.
+  - Verified here: the CLI builds on Windows from crates.io, accepts gatehouse's
+    arguments (it got as far as "CVC5 solver not found"), and `cedar validate` accepts
+    the compiled policy against gatehouse's schema with no warnings. Running cvc5 on the
+    development machine was not possible, so the proofs themselves run in the
+    `policy-prove` workflow (Linux) only.
+- **The bounded check is the fallback and runs first.** It builds names that match each
+  pattern and names that just miss it (`rm_?` gives `rm_q` and `rm_qq`), adds pinned
+  tools if `--pins` is given, and enumerates every outcome of the matching rules'
+  conditions.
+  - It doesn't enumerate label sets. Labels only occur in `forbid` policies and only
+    through `contains`, so adding a label can only make a decision stricter (a
+    hypothesis test checks this). The most permissive request in scope therefore
+    carries exactly the invariant's labels.
+  - A bounded counterexample is concrete and always wins over a symcc "verified". It
+    can't prove absence beyond what it enumerated, and its output says "not a proof".
+- **Policy labels are compiled into Cedar.** A tool carries a label if the request says
+  so (hints) or a `labels:` pattern matches it. The first version of the encoding only
+  read labels from the request, so a proof treated `send_email` as possibly unlabelled.
+  `policy prove` found that gap on the example policy. The reference evaluator now also
+  always adds the policy's labels, so a caller can't leave them out.
+- **"Schema generated from pinned tools" (roadmap) is reinterpreted.** A Cedar schema
+  can't restrict a string attribute to the set of pinned names. Pinned tools instead
+  become `entities.json` from `policy compile --pins` (labels included) and the
+  bounded check's universe. The symbolic proof covers every name, which is stronger
+  than covering the pinned ones.
+- The check found a real bug in the first draft of `examples/policy-flow.yaml`:
+  `delete_*: require_approval` left a tool named `delete` (or `bulk_delete`) allowed by
+  `"*": allow`.
+Alternatives considered:
+- Invariants inside the policy file: whoever edits the policy would also edit what it
+  is checked against.
+- Raw Cedar invariants: more expressive but unreviewable for most operators. They can
+  be added later as an `expert:` key.
+- A small Rust prover on `cedar-policy-symcc`: more code to maintain than parsing two
+  CLI output lines.

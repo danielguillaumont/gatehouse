@@ -1,0 +1,27 @@
+# Invariants for examples/policy-flow.yaml, checked by `gatehouse policy prove`.
+# `never: allow` = never allowed without a human; `never: allow_or_approve` = always blocked.
+version: 1
+invariants:
+  - name: deletes always need a human
+    tools: "*delete*"
+    never: allow
+
+  - name: shells are always blocked
+    tools: "*shell*"
+    never: allow_or_approve
+
+  - name: nothing leaves a session that read untrusted input and private data
+    tool_labels: [egress]
+    session_labels: [untrusted_input, private_data]
+    never: allow
+
+  - name: nothing changes state in that session either
+    tool_labels: [state_change]
+    session_labels: [untrusted_input, private_data]
+    never: allow
+
+  - name: mail is never sent without approval once the agent read the web and the inbox
+    servers: mail
+    tools: send_email
+    session_labels: [untrusted_input, private_data]
+    never: allow

@@ -121,7 +121,51 @@ runtime, gatehouse would use the stricter result and record
 `basis: engine_disagreement`. `engine: native` uses only the reference evaluator. A
 policy Cedar can't compile fails to load (`ErrorKind: engine`), which blocks every call.
 
-`gatehouse policy compile POLICY` prints the Cedar policy and schema.
+`gatehouse policy compile POLICY` prints the Cedar policy; `--out DIR` writes
+`policy.cedar` and `schema.cedarschema.json`, plus `entities.json` (one entity per pinned
+tool, with its labels) when `--pins` is given.
+
+## Proving invariants
+
+`gatehouse policy prove POLICY --invariants FILE` checks statements that must hold for
+**every** call, whatever the names, labels or arguments (D-041):
+
+```yaml
+version: 1
+invariants:
+  - name: deletes always need a human
+    tools: "*delete*"
+    never: allow                  # never allowed without approval
+  - name: shells are always blocked
+    tools: "*shell*"
+    never: allow_or_approve       # always blocked
+  - name: nothing leaves a session that read untrusted input and private data
+    tool_labels: [egress]         # tools carrying egress (policy labels or hints)
+    session_labels: [untrusted_input, private_data]
+    never: allow
+```
+
+Scopes use `servers` and `tools` (`*` globs only), `tool_labels` and `session_labels`.
+It exits with 0 if every invariant holds, 1 if one doesn't (with a counterexample), and
+2 on errors.
+
+- With the Cedar CLI built with `analyze` and cvc5 (`--cedar PATH`,
+  `$GATEHOUSE_CEDAR_CLI`, or `cedar` on `PATH`), each invariant is **proved** by Cedar's
+  symbolic compiler for every request the schema allows. Patterns with `?` or `[...]`
+  are opaque to the solver, so a counterexample involving them may not be reachable.
+  The output says so.
+- Without it, a **bounded check** enumerates names built from the policy's own patterns
+  (and pinned tools with `--pins`) and every outcome of their conditions. It finds real
+  counterexamples but is not a proof, and says so. `--require-symcc` makes a missing
+  prover an error; the `policy-prove` CI workflow uses it.
+
+Argument conditions are opaque to `prove`: it considers both outcomes of every
+condition. "`send_email` is allowed only to example.com" is the condition's own unit
+test, not an invariant.
+
+[`examples/invariants.yaml`](../examples/invariants.yaml) goes with
+[`examples/policy-flow.yaml`](../examples/policy-flow.yaml). Its first draft used
+`delete_*`, and `prove` found that a tool named `delete` was still allowed.
 
 ## Name normalization
 

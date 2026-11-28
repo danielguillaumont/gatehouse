@@ -1,0 +1,49 @@
+# Flow control across servers (docs/policy.md#flow): private notes, the open web and
+# email. Each server runs under its own gatehouse; they share one session store, so a
+# call on one server is judged by what the agent already read on the others.
+#
+#   gatehouse policy prove examples/policy-flow.yaml --invariants examples/invariants.yaml
+version: 1
+default_action: block
+
+flow:
+  mode: approve          # monitor | approve | enforce
+
+servers:
+  notes:
+    tools:
+      "*": allow
+      "*delete*": require_approval   # not "delete_*": that misses `delete` and `bulk_delete`
+    labels:
+      "*": [private_data]
+      "*delete*": [state_change]
+
+  web:
+    tools:
+      fetch:
+        action: allow
+        when:
+          url: {url_hosts: ["docs.example.com", "*.wikipedia.org"]}
+        otherwise: require_approval
+    labels:
+      fetch: [untrusted_input, egress]   # a URL can carry data out, too
+
+  mail:
+    tools:
+      "list_*": allow
+      "read_*": allow
+      send_email:
+        action: allow
+        when:
+          to: {email_domains: ["example.com"]}
+          cc: {email_domains: ["example.com"]}
+        otherwise: require_approval
+    labels:
+      "list_*": [untrusted_input, private_data]   # inbound mail is both
+      "read_*": [untrusted_input, private_data]
+      send_email: [egress]
+
+  "*":
+    tools:
+      "*shell*": block
+      "*exec*": block

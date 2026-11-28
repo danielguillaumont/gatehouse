@@ -36,6 +36,11 @@ _SPLIT = re.compile(r"[^a-z0-9]+")
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
+def tokens(name: str) -> set[str]:
+    """Lowercase word tokens of a tool name (snake, kebab and camel case)."""
+    return _tokens(name)
+
+
 def _tokens(name: str) -> set[str]:
     spaced = _CAMEL.sub("_", name)
     return {t for t in _SPLIT.split(normalize_name(spaced)) if t}

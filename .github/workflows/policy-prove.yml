@@ -1,0 +1,85 @@
+name: policy-prove
+
+# Symbolic proofs of policy invariants with Cedar's SymCC (D-038, D-041): the example
+# policy must satisfy examples/invariants.yaml, and the deliberately broken copy in
+# tests/policy/fixtures must not. The bounded checker covers the same files in the
+# ordinary test suite on every OS; this job adds the proof.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/gatehouse/policy/**"
+      - "src/gatehouse/policy_cli.py"
+      - "examples/**"
+      - "tests/policy/fixtures/**"
+      - ".github/workflows/policy-prove.yml"
+  pull_request:
+    paths:
+      - "src/gatehouse/policy/**"
+      - "src/gatehouse/policy_cli.py"
+      - "examples/**"
+      - "tests/policy/fixtures/**"
+      - ".github/workflows/policy-prove.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: policy-prove-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CEDAR_CLI_VERSION: "4.15.0"
+  # cedar-policy-symcc's README pins cvc5 1.3.1; digest from the GitHub release metadata.
+  CVC5_VERSION: "1.3.1"
+  CVC5_SHA256: "1a1cda20d2df4938fa4944a69f33ddc9172e319ece0eed0aa09c4d7abede3ed1"
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+
+      - name: Cache the Cedar CLI
+        id: cedar-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cedar-cli
+          key: cedar-cli-${{ env.CEDAR_CLI_VERSION }}-analyze-${{ runner.os }}
+      - name: Build the Cedar CLI with symcc
+        if: steps.cedar-cache.outputs.cache-hit != 'true'
+        run: >-
+          cargo install cedar-policy-cli --version "$CEDAR_CLI_VERSION"
+          --features analyze --locked --root ~/.cache/cedar-cli
+      - name: Install cvc5
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/cvc5.zip" \
+            "https://github.com/cvc5/cvc5/releases/download/cvc5-$CVC5_VERSION/cvc5-Linux-x86_64-static.zip"
+          echo "$CVC5_SHA256  $RUNNER_TEMP/cvc5.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cvc5.zip" -d "$RUNNER_TEMP/cvc5"
+          bin="$(find "$RUNNER_TEMP/cvc5" -type f -name cvc5 | head -1)"
+          chmod +x "$bin"
+          "$bin" --version | head -1
+          echo "CVC5=$bin" >> "$GITHUB_ENV"
+          echo "GATEHOUSE_CEDAR_CLI=$HOME/.cache/cedar-cli/bin/cedar" >> "$GITHUB_ENV"
+
+      - name: The example policy satisfies its invariants
+        run: >-
+          uv run gatehouse policy prove examples/policy-flow.yaml
+          --invariants examples/invariants.yaml --require-symcc
+      - name: The broken policy fails
+        run: |
+          set +e
+          uv run gatehouse policy prove tests/policy/fixtures/policy-flow-broken.yaml \
+            --invariants examples/invariants.yaml --require-symcc
+          rc=$?
+          set -e
+          echo "exit code: $rc (expected 1)"
+          test "$rc" -eq 1

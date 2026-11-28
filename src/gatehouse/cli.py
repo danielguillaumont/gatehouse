@@ -6,6 +6,8 @@
     gatehouse diff --name NAME [--pins FILE] -- <server command...>
     gatehouse validate-policy FILE
     gatehouse policy-hash FILE
+    gatehouse policy compile FILE [--out DIR] [--pins FILE]
+    gatehouse policy prove FILE --invariants FILE [--pins FILE] [--cedar PATH] [--require-symcc]
     gatehouse table-schema
 
 Only ``run`` speaks MCP on stdout; ``serve`` speaks MCP over HTTP; the other commands
@@ -126,6 +128,21 @@ def _parser() -> argparse.ArgumentParser:
     ph = sub.add_parser("policy-hash", help="print the SHA-256 used by --expect-policy-sha256")
     ph.add_argument("policy", type=Path)
     sub.add_parser("table-schema", help="print the GatehouseEvents_CL column schema (JSON)")
+
+    pol = sub.add_parser("policy", help="compile a policy to Cedar, or prove invariants")
+    psub = pol.add_subparsers(dest="policy_cmd", required=True)
+    pc = psub.add_parser("compile", help="print the Cedar policy (or write it with --out)")
+    pc.add_argument("policy", type=Path)
+    pc.add_argument("--out", type=Path, default=None, help="write policy, schema, entities")
+    pc.add_argument("--pins", type=Path, default=None, help="add pinned tools as entities")
+    pp = psub.add_parser("prove", help="check invariants (exit 1 if one does not hold)")
+    pp.add_argument("policy", type=Path)
+    pp.add_argument("--invariants", type=Path, required=True)
+    pp.add_argument("--pins", type=Path, default=None, help="also check every pinned tool")
+    pp.add_argument("--cedar", default=None, help="cedar CLI built with `analyze` (symcc)")
+    pp.add_argument(
+        "--require-symcc", action="store_true", help="fail unless symcc can run (for CI)"
+    )
     return p
 
 
@@ -153,6 +170,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
         _out(load.sha256)
         return 0 if load.ok else 1
+    if args.cmd == "policy":
+        from gatehouse.policy_cli import cmd_compile, cmd_prove
+
+        return cmd_compile(args) if args.policy_cmd == "compile" else cmd_prove(args)
     if args.cmd == "table-schema":
         from gatehouse.events.schema import sentinel_columns
 
