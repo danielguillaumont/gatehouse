@@ -72,9 +72,14 @@ jobs:
           uv run python -m attacks http --target direct --out reports/direct-http
           uv run python -m attacks http --target gatehouse --out reports/gatehouse-http
       - name: Latency benchmark (informational, shared runners are noisy)
+        # allow: Cedar checked against the reference (default); native: the reference
+        # alone (allow minus native = Cedar's cost); flow: Rule of Two on, results
+        # fingerprinted (D-043). Same runner, one after the other.
         run: |
-          uv run python -m bench.latency --iterations 100 --out reports/bench
-          cat reports/bench/latency.md >> "$GITHUB_STEP_SUMMARY"
+          for p in allow native flow; do
+            uv run python -m bench.latency --iterations 100 --policy "$p" --out "reports/bench-$p"
+            cat "reports/bench-$p/latency.md" >> "$GITHUB_STEP_SUMMARY"
+          done
       - uses: actions/upload-artifact@v5
         if: always()
         with:
