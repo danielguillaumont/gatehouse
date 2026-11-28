@@ -144,7 +144,8 @@ Harness `@modelcontextprotocol/conformance@0.2.0-alpha.11` (the version MCP Pyth
 2.3.0's own CI pins), against that SDK's `examples/servers/everything-server` at tag
 `v2.3.0`, `--suite all` per wire, run directly and through `gatehouse serve` (policy
 allows everything, pinning off). Windows 11, Python 3.12.2, Node 26.13.1, 2026-11-27,
-commit `8bcb6f7`. The `conformance` workflow reruns it in CI.
+commit `8bcb6f7`. The `conformance` workflow reruns it in CI. Its first run, on Ubuntu
+at `40ac48a` (Actions run 46088920475), gave the same result.
 
 | Wire | Scenarios direct | Through gatehouse | Checks through gatehouse |
 |---|---|---|---|
