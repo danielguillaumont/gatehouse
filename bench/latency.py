@@ -1,7 +1,7 @@
 """Latency added by gatehouse: tools/call round trip, direct vs. proxied.
 
     uv run python -m bench.latency [--iterations 200] [--sizes 1024 102400 1048576]
-                                   [--out reports/bench]
+                                   [--policy allow|cedar-native|flow] [--out reports/bench]
 
 For each payload size S the tool call carries an S-byte text argument and the server
 returns an S-byte text result, so both the argument detectors (client -> server) and the
@@ -28,6 +28,20 @@ from attacks.targets import TARGETS, RunPaths, server_command
 from gatehouse import __version__
 from gatehouse.client import StdioClient
 
+# What the proxied side runs. "allow" (the default, comparable with earlier runs) is an
+# allow-all policy, decided by the Cedar engine checked against the reference. "native"
+# uses the reference engine alone, so allow minus native is Cedar's cost. "flow" turns
+# session flow control on (approve mode) with the bench tool labelled private_data, so
+# every call reads the shared flow store and every result is fingerprinted (D-043).
+POLICIES = {
+    "allow": "version: 1\ndefault_action: allow\npinning: tofu\n",
+    "native": "version: 1\ndefault_action: allow\npinning: tofu\nengine: native\n",
+    "flow": (
+        "version: 1\ndefault_action: allow\npinning: tofu\nflow: {mode: approve}\n"
+        "servers:\n  bench:\n    labels: {echo: [private_data]}\n"
+    ),
+}
+
 WORDS = "the quick brown fox jumps over a lazy dog while agents call tools ".split()
 
 
@@ -51,7 +65,9 @@ def _percentile(values: list[float], p: float) -> float:
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
 
 
-def measure(target: str, size: int, iterations: int, warmup: int = 5) -> dict[str, float]:
+def measure(
+    target: str, size: int, iterations: int, warmup: int = 5, policy_name: str = "allow"
+) -> dict[str, float]:
     tmp = Path(tempfile.mkdtemp(prefix="gh-bench-"))
     spec = {
         "name": "bench",
@@ -66,7 +82,7 @@ def measure(target: str, size: int, iterations: int, warmup: int = 5) -> dict[st
     }
     (tmp / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
     policy = tmp / "policy.yaml"
-    policy.write_text("version: 1\ndefault_action: allow\npinning: tofu\n", encoding="utf-8")
+    policy.write_text(POLICIES[policy_name], encoding="utf-8")
     rp = RunPaths(policy=policy, pins=tmp / "pins.json", events_dir=tmp / "ev")
     argv = TARGETS[target].argv("bench", server_command(), rp)
     env = {"ATTACK_SPEC": str(tmp / "spec.json"), "GATEHOUSE_HOME": str(tmp / "state")}
@@ -106,7 +122,8 @@ def render(report: dict[str, Any]) -> str:
         "# Latency benchmark",
         "",
         f"gatehouse {m['gatehouse_version']} @ `{m['git_commit']}` · Python {m['python']} · "
-        f"{m['platform']} · {m['generated_at']} · {m['iterations']} calls per size",
+        f"{m['platform']} · {m['generated_at']} · {m['iterations']} calls per size · "
+        f"policy `{m.get('policy', 'allow')}`",
         "",
         "Round trip of one `tools/call` (argument and result both of the given size), in ms.",
         "",
@@ -128,13 +145,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--iterations", type=int, default=200)
     p.add_argument("--sizes", type=int, nargs="*", default=[1024, 102400, 1048576])
     p.add_argument("--out", type=Path, default=Path("reports/bench"))
+    p.add_argument("--policy", choices=sorted(POLICIES), default="allow")
     args = p.parse_args(argv)
     results: list[dict[str, Any]] = []
     for size in args.sizes:
         iters = args.iterations if size < (1 << 20) else max(20, args.iterations // 4)
         row: dict[str, Any] = {"size": size}
         for target in ("direct", "gatehouse"):
-            row[target] = measure(target, size, iters)
+            row[target] = measure(target, size, iters, policy_name=args.policy)
             sys.stderr.write(f"{target:10} {_fmt_size(size):>8}  {row[target]}\n")
         results.append(row)
     report = {
@@ -145,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "iterations": args.iterations,
+            "policy": args.policy,
         },
         "results": results,
     }
