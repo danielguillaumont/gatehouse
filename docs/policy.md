@@ -107,9 +107,70 @@ Limits:
   a symlink inside the root can still reach outside it. Point roots at directories the
   agent can't write symlinks into, or rely on the server's own sandbox for that.
 - An argument the rule doesn't name is not checked. In the `send_email` example a `bcc`
-  argument would go through, so name every recipient field the tool has (`gatehouse
-  policy prove` can check that a policy constrains them; see below).
+  argument would go through, so name every recipient field the tool has. The tool's
+  pinned `inputSchema` lists them. `policy prove` treats conditions as opaque, so it
+  can't catch a missing one.
 - `block` rules can't have conditions: block is unconditional.
+
+## Flow control (Rule of Two)
+
+An agent that holds all three of these can be talked into exfiltration by one injected
+sentence:
+
+- **untrusted input:** web pages, inbound email, issues written by strangers;
+- **private data:** notes, inbox, files;
+- **a way to act or send data out:** email, uploads, outbound requests, writes.
+
+The Rule of Two (Meta, 2025) says a session should hold at most two. gatehouse tracks
+which of them the agent session holds, across every server, and checks each call
+(ADR-0005):
+
+```yaml
+flow:
+  mode: approve            # off (default) | monitor | approve | enforce
+  annotation_hints: true   # server annotations may add labels (default true)
+  name_hints: true         # tool-name keywords may add labels (default true)
+
+servers:
+  notes:
+    labels: {"*": [private_data]}
+  web:
+    labels: {fetch: [untrusted_input, egress]}   # a URL can carry data out
+  mail:
+    labels:
+      "read_*": [untrusted_input, private_data]
+      send_email: [egress]
+```
+
+- **Labels:** `untrusted_input`, `private_data`, `state_change` and `egress`. Every
+  matching `labels:` entry applies.
+  - Hints can only add labels. `destructiveHint: true` or `readOnlyHint: false` adds
+    `state_change`; `openWorldHint: true` adds `untrusted_input` and `egress`.
+  - Name keywords add labels too: `send`, `upload`, `fetch` and others give `egress`;
+    `delete`, `write` and others give `state_change`. A server can't remove a label,
+    because a server choosing its own labels could hide an egress tool.
+  - **Label every egress tool explicitly.** Hints are a safety net, not a policy.
+- **The check.** A call *completes the trifecta* if the session's labels plus the
+  tool's labels cover all three properties (`state_change` and `egress` count as the
+  same one) and the tool adds at least one. The order doesn't matter, and there's no
+  time window: reading the inbox after sending mail trips it just as sending after
+  reading does.
+- **Modes:**
+  - `monitor` allows and logs `flow.rule_of_two`;
+  - `approve` asks a human (elicitation or MRTR), or blocks if the client can't be asked;
+  - `enforce` blocks.
+- **When labels join the session.** A call's labels are added when gatehouse forwards
+  it (blocked calls add nothing). A delivered result in which a detector finds injected
+  instructions adds `untrusted_input`, whatever its tool's labels.
+- **The session** is the agent process (`AgentSessionId`). Every gatehouse under one
+  Claude Code, Cursor or similar process shares labels through
+  `<state dir>/flow.sqlite3`. `GATEHOUSE_AGENT_SESSION_ID` overrides the key.
+- **Failures are closed.** An unreadable store counts as holding every label. A label
+  that can't be recorded blocks its call.
+
+`gatehouse policy prove` can check flow invariants, for example "no `egress` tool is
+allowed in a session holding `untrusted_input` and `private_data`" (see
+[`examples/invariants.yaml`](../examples/invariants.yaml)).
 
 ## Engines: Cedar and the reference
 

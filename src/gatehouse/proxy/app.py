@@ -22,6 +22,7 @@ from gatehouse.inspect.pipeline import ScanConfig
 from gatehouse.inspect.self_protect import protected_variants
 from gatehouse.policy.errors import PolicyErrorKind, PolicyLoadFailed
 from gatehouse.policy.loader import PolicyLoad, load_policy
+from gatehouse.policy.models import FlowMode
 from gatehouse.protocol import PINNED_SPEC_VERSION
 from gatehouse.proxy.agent import agent_session_id
 from gatehouse.proxy.framing import DEFAULT_MAX_FRAME_BYTES
@@ -29,6 +30,7 @@ from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Router, RouterConfig, Send
 from gatehouse.proxy.stdio import run_stdio
+from gatehouse.state.flow import FlowStore, FlowStoreError
 
 
 @dataclass
@@ -131,6 +133,8 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
     else:
         emitter.emit(EventType.POLICY_LOADED, details={"PolicyPath": load.path})
 
+    flow = _flow_store(load, emitter)
+
     protected = [opts.policy_path, opts.pins_path, opts.hmac_key_path, paths.state_dir()]
     if opts.events_dir is not None:
         protected.append(opts.events_dir)
@@ -144,8 +148,44 @@ def prepare(opts: RunOptions) -> tuple[RouterConfig, Emitter]:
         approval_timeout=opts.approval_timeout if opts.approval_timeout > 0 else None,
         # MRTR approval prompts (2026-07-28 clients); --approval-timeout 0 disables them too
         state_signer=StateSigner(install_key) if opts.approval_timeout > 0 else None,
+        flow=flow,
+        agent_session_id=context.agent_session_id,
     )
     return config, emitter
+
+
+class _UnavailableFlowStore(FlowStore):
+    """Stands in for a flow store that could not be opened: every read and write fails,
+    so the router treats the session as holding every label and blocks what it can't
+    record (fail closed, ADR-0001)."""
+
+    def __init__(self, error: str) -> None:
+        super().__init__(None)
+        self.error = error
+
+    def facts(self, session: str, kind: str) -> frozenset[str]:
+        raise FlowStoreError(self.error)
+
+    def add(self, session: str, kind: str, values: Any, *, server: str, tool: str) -> None:
+        raise FlowStoreError(self.error)
+
+
+def _flow_store(load: PolicyLoad, emitter: Emitter) -> FlowStore:
+    policy = load.policy
+    if policy is None or policy.flow.mode is FlowMode.OFF:
+        return FlowStore(None)  # never used
+    path = paths.state_dir() / "flow.sqlite3"
+    try:
+        return FlowStore(path)
+    except FlowStoreError as exc:
+        emitter.emit(
+            EventType.INTERNAL_ERROR,
+            severity=Severity.HIGH,
+            action=EventAction.FAIL_CLOSED,
+            reason=f"cannot open the flow store; labelled calls will be blocked: {exc}",
+            details={"Component": "flow_store"},
+        )
+        return _UnavailableFlowStore(str(exc))
 
 
 def run(opts: RunOptions) -> int:

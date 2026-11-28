@@ -67,8 +67,9 @@ disagree. `SchemaVersion` is 1.
 | `pin.created` | a tool was pinned (TOFU) | Sha256, PinnedBy |
 | `pin.store_error` | pin store unreadable or unwritable | |
 | `approval.requested` / `granted` / `denied` | human approval via elicitation, or via MRTR for 2026-07-28 clients | Channel (`mrtr`) |
+| `flow.rule_of_two` | a call completes the Rule-of-Two trifecta (any `flow.mode` but `off`); Action says what happened | FlowMode, SessionLabels, ToolLabels |
 | `detection` | one per detector finding | MatchFingerprint, FindingAction, ChangedFields (pin mismatch) |
-| `gatehouse.internal_error` | a bug or an upstream that can't start | |
+| `gatehouse.internal_error` | a bug, an upstream that can't start, or a flow store that can't be read or written (fails closed) | Component (`flow_store`) |
 | `gatehouse.fail_open` | telemetry lost (the only fail-open path, ADR-0001) | Component |
 
 ## Guarantees

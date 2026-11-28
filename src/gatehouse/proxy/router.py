@@ -52,10 +52,13 @@ from gatehouse.inspect.server_requests import SHAPE_ID, inspect_server_request
 from gatehouse.inspect.walk import WalkStats
 from gatehouse.jsonutil import as_list, as_obj, as_str
 from gatehouse.policy.engine import decide, pinning_mode
+from gatehouse.policy.labels import tool_labels
 from gatehouse.policy.loader import PolicyLoad
 from gatehouse.policy.models import (
     Action,
     FindingAction,
+    FlowMode,
+    Label,
     PinningMode,
     ProtocolSettings,
     SamplingMode,
@@ -106,6 +109,7 @@ from gatehouse.proxy.modern import (
     request_meta,
 )
 from gatehouse.proxy.session import Era, Grant, Pending, Session, ToolInfo
+from gatehouse.state.flow import FlowStore, FlowStoreError
 from gatehouse.state.pinstore import (
     PinStore,
     PinStoreError,
@@ -160,6 +164,19 @@ class RouterConfig:
     state_signer: StateSigner | None = None
     # True behind the Streamable HTTP transport: x-mcp-header annotations are enforced.
     http: bool = False
+    # Session flow control (D-040, D-042): labels shared by every gatehouse under one
+    # agent, keyed by AgentSessionId. Only touched when the policy turns flow.mode on.
+    flow: FlowStore = field(default_factory=lambda: FlowStore(None))
+    agent_session_id: str = "local"
+
+
+@dataclass
+class _FlowCheck:
+    mode: FlowMode
+    tool_labels: frozenset[Label]
+    session_labels: frozenset[Label]
+    violation: bool
+    store_error: str | None = None
 
 
 @dataclass
@@ -169,6 +186,7 @@ class _CallVerdict:
     basis: str
     policy_rule: str | None
     findings: list[Finding]
+    flow: _FlowCheck | None = None
 
 
 @dataclass
@@ -625,7 +643,18 @@ class Router:
             actions.append(avail)
             reasons.append(avail_reason or "tool not available")
 
-        decision = decide(self.cfg.policy, server, tool)
+        info = self.session.tools.get(tool) if self.session.tools else None
+        flow = self._flow_check(tool, info)
+        decision = decide(
+            self.cfg.policy,
+            server,
+            tool,
+            arguments,
+            tool_labels=flow.tool_labels if flow else frozenset(),
+            session_labels=flow.session_labels if flow else frozenset(),
+        )
+        if flow is not None:
+            flow.violation = decision.flow_violation
         actions.append(decision.action)
         if decision.action is not Action.ALLOW:
             reasons.append(f"policy: {decision.reason}")
@@ -634,7 +663,6 @@ class Router:
             or None
         )
 
-        info = self.session.tools.get(tool) if self.session.tools else None
         if info is not None and info.requires_approval:
             actions.append(Action.REQUIRE_APPROVAL)
             reasons.append(info.approval_reason or "tool definition flagged at listing time")
@@ -653,7 +681,79 @@ class Router:
             basis = "detection"
         else:
             basis = decision.basis.value
-        return _CallVerdict(final, reasons, basis, policy_rule, findings)
+        return _CallVerdict(final, reasons, basis, policy_rule, findings, flow)
+
+    def _flow_mode(self) -> FlowMode:
+        policy = self.cfg.policy.policy
+        return policy.flow.mode if policy is not None else FlowMode.OFF
+
+    def _flow_check(self, tool: str, info: ToolInfo | None) -> _FlowCheck | None:
+        """Labels for the Rule-of-Two check, or None when flow control is off."""
+        policy = self.cfg.policy.policy
+        mode = self._flow_mode()
+        if policy is None or mode is FlowMode.OFF:
+            return None
+        raw = info.definition.get("annotations") if info is not None else None
+        annotations = as_obj(raw)
+        labels = tool_labels(policy, self.cfg.server_name, tool, annotations)
+        try:
+            session = self.cfg.flow.labels(self.cfg.agent_session_id)
+            error = None
+        except FlowStoreError as exc:
+            # Fail closed: a session we can't read is treated as holding every label.
+            session = frozenset(Label)
+            error = str(exc)
+            self.emit.emit(
+                EventType.INTERNAL_ERROR,
+                severity=Severity.HIGH,
+                action=EventAction.FAIL_CLOSED,
+                tool_name=tool,
+                reason=f"flow store unreadable; treating the session as holding every label: {exc}",
+                details={"Component": "flow_store"},
+            )
+        return _FlowCheck(mode, labels, session, violation=False, store_error=error)
+
+    def _flow_record(self, tool: str, labels: Iterable[Label]) -> str | None:
+        """Add labels to the session before the call or result reaches its destination.
+        Returns an error message if they could not be shared (the caller then blocks)."""
+        labels = frozenset(labels)
+        if not labels or self._flow_mode() is FlowMode.OFF:
+            return None
+        try:
+            self.cfg.flow.add_labels(
+                self.cfg.agent_session_id, labels, server=self.cfg.server_name, tool=tool
+            )
+        except FlowStoreError as exc:
+            self.emit.emit(
+                EventType.INTERNAL_ERROR,
+                severity=Severity.HIGH,
+                action=EventAction.FAIL_CLOSED,
+                tool_name=tool,
+                reason=f"flow store unwritable; blocking instead of losing labels: {exc}",
+                details={"Component": "flow_store"},
+            )
+            return "session flow state could not be recorded (flow store unavailable)"
+        return None
+
+    def _emit_flow(self, flow: _FlowCheck, outcome: EventAction, common: dict[str, Any]) -> None:
+        if not flow.violation:
+            return
+        blocked = outcome in (EventAction.BLOCKED, EventAction.DENIED)
+        self.emit.emit(
+            EventType.FLOW_RULE_OF_TWO,
+            severity=Severity.HIGH if blocked else Severity.MEDIUM,
+            action=outcome,
+            reason=(
+                "the call gives the agent session untrusted input, private data and a way to "
+                f"act or send data out (flow mode {flow.mode.value})"
+            ),
+            details={
+                "FlowMode": flow.mode.value,
+                "SessionLabels": sorted(label.value for label in flow.session_labels),
+                "ToolLabels": sorted(label.value for label in flow.tool_labels),
+            },
+            **common,
+        )
 
     async def _tool_call(self, frame: Frame, params: dict[str, Any], meta: RequestMeta) -> None:
         assert frame.id_key is not None
@@ -838,6 +938,21 @@ class Router:
         elif approved is False and action is Action.ALLOW:
             approved = None  # a declined prompt for a call that no longer needs approval
 
+        if action is Action.ALLOW and verdict.flow is not None:
+            # The tool's labels join the session before the call is forwarded, so a call
+            # on another server never sees a session older than this one.
+            policy = self.cfg.policy.policy
+            assert policy is not None
+            effective = verdict.flow.tool_labels | policy.labels_for(
+                self.cfg.server_name, call.name
+            )
+            error = self._flow_record(call.name, effective)
+            if error is not None:
+                action = Action.BLOCK
+                approved = None
+                verdict.reasons.append(error)
+                verdict.basis = "flow"
+
         outcome = {
             Action.ALLOW: EventAction.APPROVED if approved else EventAction.ALLOWED,
             Action.BLOCK: EventAction.DENIED if approved is False else EventAction.BLOCKED,
@@ -856,6 +971,8 @@ class Router:
             self.emit.emit_finding(
                 f, action=outcome, details={"FindingAction": fa.value}, **call.common
             )
+        if verdict.flow is not None:
+            self._emit_flow(verdict.flow, outcome, call.common)
 
         reason = "; ".join(r for r in verdict.reasons if r) or None
         self.emit.emit(
@@ -1680,6 +1797,12 @@ class Router:
         worst = self._worst(findings)
         # Approval is not possible after the fact: a flagged result is withheld.
         blocked = worst is not Action.ALLOW
+        flow_error: str | None = None
+        if not blocked and any(f.detector_id in _INJECTION_DETECTORS for f in findings):
+            # Whatever the tool's labels say, a result with injected instructions in it is
+            # untrusted input once the agent reads it.
+            flow_error = self._flow_record(pending.tool_name or "", [Label.UNTRUSTED_INPUT])
+            blocked = flow_error is not None
         outcome = (
             EventAction.BLOCKED
             if blocked
@@ -1711,7 +1834,7 @@ class Router:
         if blocked:
             detectors = ", ".join(sorted({f"{f.detector_id}/{f.rule_id}" for f in findings}))
             await self._reply_blocked_tool(
-                frame.id, f"tool result withheld ({detectors})", pending.modern
+                frame.id, f"tool result withheld ({flow_error or detectors})", pending.modern
             )
         else:
             await self.to_client(frame.raw + b"\n")
@@ -1733,6 +1856,9 @@ class Router:
                 UPSTREAM_UNAVAILABLE,
                 f"gatehouse: upstream server exited ({pending.method})",
             )
+
+
+_INJECTION_DETECTORS = frozenset({"response.injection", "text.invisible"})
 
 
 def _shape(

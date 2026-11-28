@@ -17,6 +17,7 @@ from gatehouse.policy.loader import load_policy
 from gatehouse.proxy.integrity import PolicyWatcher
 from gatehouse.proxy.modern import StateSigner
 from gatehouse.proxy.router import Approver, Router, RouterConfig
+from gatehouse.state.flow import FlowStore
 
 FINGERPRINT_KEY = b"k" * 32
 MODERN = "2026-07-28"
@@ -183,6 +184,8 @@ def make_harness(
     approver: Approver | None = None,
     approval_timeout: float | None = None,
     http: bool = False,
+    flow: FlowStore | None = None,
+    agent_session_id: str = "agent",
 ) -> RouterHarness:
     policy_path = tmp_path / "policy.yaml"
     policy_path.write_text(textwrap.dedent(policy_yaml), encoding="utf-8")
@@ -207,6 +210,8 @@ def make_harness(
         approval_timeout=approval_timeout,
         state_signer=StateSigner(FINGERPRINT_KEY),
         http=http,
+        flow=flow if flow is not None else FlowStore(None),
+        agent_session_id=agent_session_id,
     )
     harness: RouterHarness
 

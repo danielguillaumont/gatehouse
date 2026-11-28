@@ -59,6 +59,11 @@ class EventType(StrEnum):
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_GRANTED = "approval.granted"
     APPROVAL_DENIED = "approval.denied"
+    # session flow control (M5, D-040)
+    FLOW_RULE_OF_TWO = "flow.rule_of_two"
+    FLOW_PROVENANCE_MATCH = "flow.provenance_match"
+    RESPONSE_QUARANTINED = "response.quarantined"
+    CONTROL_KILL_SWITCH = "control.kill_switch"
     # detections: DetectorId / RuleId say what was found
     DETECTION = "detection"
     # gatehouse health

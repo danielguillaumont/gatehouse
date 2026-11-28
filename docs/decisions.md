@@ -599,3 +599,32 @@ Alternatives considered:
   be added later as an `expert:` key.
 - A small Rust prover on `cedar-policy-symcc`: more code to maintain than parsing two
   CLI output lines.
+
+**D-042 (2026-11-27) Flow state: SQLite WAL, grow-only rows, fail closed on both read
+and write.** The roadmap left the choice open between "SQLite WAL with a single-writer
+discipline" and "a tiny local broker, pick by measuring". The store holds a grow-only
+set, so there's nothing to merge and no single writer is needed. Each fact is one
+`INSERT OR IGNORE` row keyed `(session, kind, value)`, and concurrent processes can't
+lose an update.
+- **Measured** (`tests/state/test_flow_store.py`, Windows 11, Python 3.12): 48 writer
+  processes, 40 provenance facts and 40 label writes each, against one database: 1920/1920
+  facts present, about 15 s including process start-up. A broker would add a process to
+  supervise and a socket to protect, for no correctness gain.
+- **Reads and writes are synchronous** in the router. Each is one indexed query on a
+  local file. The busy timeout is 2 s, so a long lock wait blocks only the call that hit it.
+- **Failures:**
+  - An unreadable store counts as holding every label.
+  - An unwritable store blocks the call, or withholds the result for an injection
+    taint, and emits `gatehouse.internal_error` with `Component: flow_store`. So
+    ADR-0001's single fail-open path (telemetry loss) stays the only one.
+  - A store that can't be opened at start-up is replaced by one that fails every
+    operation, so the same rules apply.
+- **Retention.** Rows older than 14 days are deleted when a process opens the store.
+- **What counts as a taint from a result.** A finding from `response.injection` or
+  `text.invisible` on a result that is delivered (findings mapped to `log`). A withheld
+  result never reached the agent, so it adds nothing.
+Alternatives considered:
+- A per-process in-memory set: misses every cross-server chain, which is the whole point.
+- The JSON pin-store pattern (lock file plus atomic replace): the read-modify-write that
+  lost updates in v0.1.
+- A broker: see above.
